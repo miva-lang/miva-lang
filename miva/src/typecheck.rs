@@ -322,6 +322,86 @@ fn satisfies_shape(
     (true, None, None)
 }
 
+/// Walk an expression tree and check SLetTyped statements with TShape types.
+fn check_shape_satisfaction(expr: &Expr, shapes: &HashMap<String, Vec<FieldDef>>, structs: &HashMap<String, Vec<FieldDef>>) -> Vec<Error> {
+    let mut errs = Vec::new();
+    match expr {
+        Expr::EBlock { stmts, result, .. } => {
+            for stmt in stmts {
+                if let Stmt::SLetTyped { name: _, typ, expr: inner_expr, loc } = stmt {
+                    if let Typ::TShape { name: shape_name } = typ {
+                        if let Some(shape_fields) = shapes.get(shape_name) {
+                            let inner_typ = infer_simple_type(inner_expr);
+                            if let Some(struct_name) = inner_typ {
+                                if let Some(struct_fields) = structs.get(&struct_name) {
+                                    let sfm: HashMap<&str, &Typ> = struct_fields.iter()
+                                        .map(|f| (f.name.as_str(), &f.typ))
+                                        .collect();
+                                    let (ok, missing, mismatch) = satisfies_shape(&sfm, shape_fields, &HashMap::new());
+                                    if !ok {
+                                        if let Some(field) = missing {
+                                            errs.push(Error::new("E0028", loc, &format!("type '{}' does not satisfy shape '{}': missing field '{}'", struct_name, shape_name, field)));
+                                        } else if let Some((field, expected, actual)) = mismatch {
+                                            errs.push(Error::new("E0030", loc, &format!("type '{}' does not satisfy bound '{}': field '{}' has type {} but expected {}", struct_name, shape_name, field, actual, expected)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut sub_errs = check_stmt_satisfaction(stmt, shapes, structs);
+                errs.append(&mut sub_errs);
+            }
+            if let Some(r) = result {
+                let mut sub_errs = check_shape_satisfaction(r, shapes, structs);
+                errs.append(&mut sub_errs);
+            }
+        }
+        _ => {}
+    }
+    errs
+}
+
+fn check_stmt_satisfaction(stmt: &Stmt, shapes: &HashMap<String, Vec<FieldDef>>, structs: &HashMap<String, Vec<FieldDef>>) -> Vec<Error> {
+    let mut errs = Vec::new();
+    match stmt {
+        Stmt::SLetTyped { typ, expr, loc, .. } => {
+            if let Typ::TShape { name: shape_name } = typ {
+                if let Some(shape_fields) = shapes.get(shape_name) {
+                    let inner_typ = infer_simple_type(expr);
+                    if let Some(struct_name) = inner_typ {
+                        if let Some(struct_fields) = structs.get(&struct_name) {
+                            let sfm: HashMap<&str, &Typ> = struct_fields.iter()
+                                .map(|f| (f.name.as_str(), &f.typ))
+                                .collect();
+                            let (ok, missing, mismatch) = satisfies_shape(&sfm, shape_fields, &HashMap::new());
+                            if !ok {
+                                if let Some(field) = missing {
+                                    errs.push(Error::new("E0028", loc, &format!("type '{}' does not satisfy shape '{}': missing field '{}'", struct_name, shape_name, field)));
+                                } else if let Some((field, expected, actual)) = mismatch {
+                                    errs.push(Error::new("E0030", loc, &format!("type '{}' does not satisfy bound '{}': field '{}' has type {} but expected {}", struct_name, shape_name, field, actual, expected)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    errs
+}
+
+/// Simple type inference for expressions (not full type checking).
+fn infer_simple_type(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::EStructLit { name, .. } => Some(name.clone()),
+        Expr::EVar { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+}
+
 fn build_struct_map(
     defs: &[Def],
 ) -> (HashMap<String, Vec<FieldDef>>, HashMap<String, Vec<String>>) {
@@ -2114,6 +2194,7 @@ pub fn check_program_with(
         }
     }
     let (structs, struct_type_params) = build_struct_map(defs);
+    let (shapes, shape_type_params) = build_shape_map(defs);
     let (enums, enum_type_params) = build_enum_maps(defs);
     let has_imports = defs.iter().any(|d| {
         matches!(d, Def::SImport { .. })
@@ -2264,6 +2345,21 @@ pub fn check_program_with(
                     body,
                 );
                 errs.append(&mut fun_errs);
+            }
+            _ => {}
+        }
+    }
+
+    // Shape satisfaction check: verify all SLetTyped with TShape types
+    for def in defs {
+        match def {
+            Def::DFunc { body, .. } => {
+                let mut shape_errs = check_shape_satisfaction(body, &shapes, &structs);
+                errs.append(&mut shape_errs);
+            }
+            Def::DTest { body, .. } => {
+                let mut shape_errs = check_shape_satisfaction(body, &shapes, &structs);
+                errs.append(&mut shape_errs);
             }
             _ => {}
         }
