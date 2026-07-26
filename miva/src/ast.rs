@@ -94,6 +94,10 @@ pub enum Typ {
     TInvalid,
     #[serde(rename = "genericParam")]
     TGenericParam { name: String },
+    #[serde(rename = "shape")]
+    TShape {
+        name: String,
+    },
     #[serde(rename = "func")]
     TFunc {
         #[serde(rename = "params")]
@@ -379,6 +383,14 @@ pub enum Def {
         #[serde(default)]
         type_params: Vec<String>,
     },
+    #[serde(rename = "shape")]
+    DShape {
+        loc: Loc,
+        name: String,
+        fields: Vec<FieldDef>,
+        #[serde(default)]
+        type_params: Vec<String>,
+    },
     #[serde(rename = "func")]
     DFunc {
         loc: Loc,
@@ -392,6 +404,8 @@ pub enum Def {
         safety: Safety,
         #[serde(default)]
         is_async: bool,
+        #[serde(default)]
+        type_bounds: Vec<String>,
     },
     #[serde(rename = "cFunc")]
     DCFuncUnsafe {

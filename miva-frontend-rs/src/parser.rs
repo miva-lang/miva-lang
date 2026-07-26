@@ -158,13 +158,29 @@ impl<'input> Parser<'input> {
             }
         };
 
-        // Check for generic type parameters: name[T, U] =
-        let type_params = if self.peek_token()? == Some(&Token::LBracket) {
+        // Check for generic type parameters with optional bounds: name[T] or name[T: Shape1 + Shape2]
+        let (type_params, type_bounds) = if self.peek_token()? == Some(&Token::LBracket) {
             self.advance()?; // consume "["
             let mut params = Vec::new();
+            let mut bounds = Vec::new();
             loop {
                 let (pname, _) = self.expect_ident()?;
-                params.push(pname);
+                params.push(pname.clone());
+                // Check for bounds: T: Shape1 + Shape2
+                if self.peek_token()? == Some(&Token::Colon) {
+                    self.advance()?; // consume ":"
+                    let mut bound_names = Vec::new();
+                    loop {
+                        let (bound_name, _) = self.expect_ident()?;
+                        bound_names.push(bound_name);
+                        if self.peek_token()? == Some(&Token::Plus) {
+                            self.advance()?; // consume "+"
+                        } else {
+                            break;
+                        }
+                    }
+                    bounds.push(format!("{}:{}", pname, bound_names.join("+")));
+                }
                 if self.peek_token()? == Some(&Token::Comma) {
                     self.advance()?;
                 } else {
@@ -172,9 +188,9 @@ impl<'input> Parser<'input> {
                 }
             }
             self.expect(&Token::RBracket)?;
-            params
+            (params, bounds)
         } else {
-            vec![]
+            (vec![], vec![])
         };
 
         self.expect(&Token::Eq)?;
@@ -189,8 +205,13 @@ impl<'input> Parser<'input> {
             return self.parse_enum_body(name, type_params, start);
         }
 
-        // Must be a function
-        self.parse_func_body(name, type_params, start, Safety::Safe, false)
+        // Check for shape
+        if self.peek_token()? == Some(&Token::Shape) {
+            return self.parse_shape_body(name, type_params, start);
+        }
+
+        // Must be a function — pass bounds along
+        Ok(self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Safe, false)?)
     }
 
     fn parse_struct_body(
@@ -267,10 +288,52 @@ impl<'input> Parser<'input> {
         })
     }
 
+    fn parse_shape_body(
+        &mut self,
+        name: String,
+        type_params: Vec<String>,
+        start: usize,
+    ) -> Result<Def, String> {
+        self.advance()?; // consume "shape"
+        self.expect(&Token::LBrace)?;
+        let mut fields = Vec::new();
+        while self.peek_token()? != Some(&Token::RBrace) {
+            let (field_name, _) = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let typ = self.parse_typ()?;
+            fields.push(FieldDef {
+                name: field_name,
+                typ,
+            });
+            if self.peek_token()? == Some(&Token::Comma) {
+                self.advance()?;
+            }
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(Def::DShape {
+            loc: self.loc(start),
+            name,
+            fields,
+            type_params,
+        })
+    }
+
     fn parse_func_body(
         &mut self,
         name: String,
         type_params: Vec<String>,
+        start: usize,
+        safety: Safety,
+        is_async: bool,
+    ) -> Result<Def, String> {
+        self.parse_func_body_with_bounds(name, type_params, vec![], start, safety, is_async)
+    }
+
+    fn parse_func_body_with_bounds(
+        &mut self,
+        name: String,
+        type_params: Vec<String>,
+        type_bounds: Vec<String>,
         start: usize,
         safety: Safety,
         is_async: bool,
@@ -284,10 +347,12 @@ impl<'input> Parser<'input> {
         };
         self.expect(&Token::DArrow)?;
         let body = self.parse_expr()?;
+        
         Ok(Def::DFunc {
             loc: self.loc(start),
             name,
             type_params,
+            type_bounds,
             params,
             returns,
             body: Box::new(body),
@@ -299,12 +364,27 @@ impl<'input> Parser<'input> {
     fn parse_func_async(&mut self) -> Result<Def, String> {
         let start = self.advance()?.0; // consume "async"
         let (name, _) = self.expect_ident()?;
-        let type_params = if self.peek_token()? == Some(&Token::LBracket) {
+        let (type_params, type_bounds) = if self.peek_token()? == Some(&Token::LBracket) {
             self.advance()?;
             let mut params = Vec::new();
+            let mut bounds = Vec::new();
             loop {
                 let (pname, _) = self.expect_ident()?;
-                params.push(pname);
+                params.push(pname.clone());
+                if self.peek_token()? == Some(&Token::Colon) {
+                    self.advance()?;
+                    let mut bound_names = Vec::new();
+                    loop {
+                        let (bound_name, _) = self.expect_ident()?;
+                        bound_names.push(bound_name);
+                        if self.peek_token()? == Some(&Token::Plus) {
+                            self.advance()?;
+                        } else {
+                            break;
+                        }
+                    }
+                    bounds.push(format!("{}:{}", pname, bound_names.join("+")));
+                }
                 if self.peek_token()? == Some(&Token::Comma) {
                     self.advance()?;
                 } else {
@@ -312,23 +392,38 @@ impl<'input> Parser<'input> {
                 }
             }
             self.expect(&Token::RBracket)?;
-            params
+            (params, bounds)
         } else {
-            vec![]
+            (vec![], vec![])
         };
         self.expect(&Token::Eq)?;
-        self.parse_func_body(name, type_params, start, Safety::Safe, true)
+        self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Safe, true)
     }
 
     fn parse_func_unsafe(&mut self) -> Result<Def, String> {
         let start = self.advance()?.0; // consume "unsafe"
         let (name, _) = self.expect_ident()?;
-        let type_params = if self.peek_token()? == Some(&Token::LBracket) {
+        let (type_params, type_bounds) = if self.peek_token()? == Some(&Token::LBracket) {
             self.advance()?;
             let mut params = Vec::new();
+            let mut bounds = Vec::new();
             loop {
                 let (pname, _) = self.expect_ident()?;
-                params.push(pname);
+                params.push(pname.clone());
+                if self.peek_token()? == Some(&Token::Colon) {
+                    self.advance()?;
+                    let mut bound_names = Vec::new();
+                    loop {
+                        let (bound_name, _) = self.expect_ident()?;
+                        bound_names.push(bound_name);
+                        if self.peek_token()? == Some(&Token::Plus) {
+                            self.advance()?;
+                        } else {
+                            break;
+                        }
+                    }
+                    bounds.push(format!("{}:{}", pname, bound_names.join("+")));
+                }
                 if self.peek_token()? == Some(&Token::Comma) {
                     self.advance()?;
                 } else {
@@ -336,23 +431,38 @@ impl<'input> Parser<'input> {
                 }
             }
             self.expect(&Token::RBracket)?;
-            params
+            (params, bounds)
         } else {
-            vec![]
+            (vec![], vec![])
         };
         self.expect(&Token::Eq)?;
-        self.parse_func_body(name, type_params, start, Safety::Unsafe, false)
+        self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Unsafe, false)
     }
 
     fn parse_func_trusted(&mut self) -> Result<Def, String> {
         let start = self.advance()?.0; // consume "trusted"
         let (name, _) = self.expect_ident()?;
-        let type_params = if self.peek_token()? == Some(&Token::LBracket) {
+        let (type_params, type_bounds) = if self.peek_token()? == Some(&Token::LBracket) {
             self.advance()?;
             let mut params = Vec::new();
+            let mut bounds = Vec::new();
             loop {
                 let (pname, _) = self.expect_ident()?;
-                params.push(pname);
+                params.push(pname.clone());
+                if self.peek_token()? == Some(&Token::Colon) {
+                    self.advance()?;
+                    let mut bound_names = Vec::new();
+                    loop {
+                        let (bound_name, _) = self.expect_ident()?;
+                        bound_names.push(bound_name);
+                        if self.peek_token()? == Some(&Token::Plus) {
+                            self.advance()?;
+                        } else {
+                            break;
+                        }
+                    }
+                    bounds.push(format!("{}:{}", pname, bound_names.join("+")));
+                }
                 if self.peek_token()? == Some(&Token::Comma) {
                     self.advance()?;
                 } else {
@@ -360,12 +470,12 @@ impl<'input> Parser<'input> {
                 }
             }
             self.expect(&Token::RBracket)?;
-            params
+            (params, bounds)
         } else {
-            vec![]
+            (vec![], vec![])
         };
         self.expect(&Token::Eq)?;
-        self.parse_func_body(name, type_params, start, Safety::Trusted, false)
+        self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Trusted, false)
     }
 
     fn parse_c_func(&mut self, used_c_keyword: bool) -> Result<Def, String> {
@@ -1141,17 +1251,55 @@ impl<'input> Parser<'input> {
     ///
     /// If explicit type arguments are present, the construct is an enum
     /// constructor call, not a pattern, so it is kept as `EMethodCall`.
+
     fn method_call_or_pattern(expr: Expr) -> Expr {
-        if let Expr::EMethodCall {
-            loc,
-            expr: receiver,
-            method,
-            type_args,
-            args,
-        } = expr
-        {
-            if type_args.is_empty() {
-                if let Expr::EVar { name: enum_name, .. } = receiver.as_ref() {
+        match expr {
+            Expr::EMethodCall {
+                loc,
+                expr: receiver,
+                method,
+                type_args,
+                args,
+            } => {
+                if type_args.is_empty() {
+                    if let Some(enum_name) = last_ident(receiver.as_ref()) {
+                        if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                            let bindings: Option<Vec<String>> = args
+                                .iter()
+                                .map(|a| match a {
+                                    Expr::EVar { name, .. } => Some(name.clone()),
+                                    _ => None,
+                                })
+                                .collect();
+                            if let Some(bindings) = bindings {
+                                return Expr::EEnumPattern {
+                                    loc,
+                                    enum_name: enum_name.to_string(),
+                                    variant: method,
+                                    bindings,
+                                };
+                            }
+                        }
+                    }
+                }
+                Expr::EMethodCall {
+                    loc,
+                    expr: receiver,
+                    method,
+                    type_args,
+                    args,
+                }
+            }
+            Expr::ECall {
+                loc,
+                name,
+                type_args,
+                args,
+            } if type_args.is_empty() => {
+                let parts: Vec<&str> = name.split('.').collect();
+                if parts.len() >= 2 {
+                    let enum_name = parts[parts.len() - 2];
+                    let variant = parts[parts.len() - 1];
                     if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
                         let bindings: Option<Vec<String>> = args
                             .iter()
@@ -1163,23 +1311,22 @@ impl<'input> Parser<'input> {
                         if let Some(bindings) = bindings {
                             return Expr::EEnumPattern {
                                 loc,
-                                enum_name: enum_name.clone(),
-                                variant: method,
+                                enum_name: enum_name.to_string(),
+                                variant: variant.to_string(),
                                 bindings,
                             };
                         }
                     }
                 }
+                Expr::ECall {
+                    loc,
+                    name,
+                    type_args,
+                    args,
+                }
             }
-            return Expr::EMethodCall {
-                loc,
-                expr: receiver,
-                method,
-                type_args,
-                args,
-            };
+            _ => expr,
         }
-        expr
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, String> {
@@ -1791,7 +1938,8 @@ impl<'input> Parser<'input> {
     fn parse_when_case(&mut self) -> Result<WhenCase, String> {
         let s = self.advance()?.0; // "when"
         self.expect(&Token::LParen)?;
-        let value = self.parse_expr()?;
+        let raw = self.parse_expr()?;
+        let value = maybe_enum_pattern(raw);
         self.expect(&Token::RParen)?;
         let guard = if self.peek_token()? == Some(&Token::If) {
             self.advance()?; // "if"
@@ -1850,6 +1998,32 @@ fn extract_call_path_from_expr(expr: &Expr) -> String {
         Expr::EVar { name, .. } => name.clone(),
         _ => String::new(),
     }
+}
+
+fn last_ident(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::EFieldAccess { field, .. } => Some(field.as_str()),
+        Expr::EVar { name, .. } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+fn maybe_enum_pattern(expr: Expr) -> Expr {
+    if let Expr::EFieldAccess { loc, expr: e, field } = &expr {
+        if field.chars().next().map_or(false, |c| c.is_uppercase()) {
+            if let Some(parent_field) = last_ident(e) {
+                if parent_field.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    return Expr::EEnumPattern {
+                        loc: loc.clone(),
+                        enum_name: parent_field.to_string(),
+                        variant: field.to_string(),
+                        bindings: vec![],
+                    };
+                }
+            }
+        }
+    }
+    expr
 }
 
 /// If `name` is a dotted `Enum.Variant`, has no explicit type arguments, and
@@ -2044,6 +2218,48 @@ mod tests {
                             assert_eq!(enum_name, "Shape");
                             assert_eq!(variant, "Rect");
                             assert_eq!(bindings, &vec!["w".to_string(), "h".to_string()]);
+                        }
+                        other => panic!("expected EEnumPattern, got {:?}", other),
+                    }
+                }
+                other => panic!("expected EChoose, got {:?}", other),
+            },
+            _ => panic!("expected DFunc"),
+        }
+    }
+
+    #[test]
+    fn test_parse_qualified_enum_destructure_pattern() {
+        let def = parse_first(
+            "f = (s: std.option.Option): int => choose (s) {\n  when (std.option.Option.Some(v)) { return v; }\n  when (std.option.Option.None) { return 0; }\n  otherwise { return 0; }\n}",
+        );
+        match def {
+            Def::DFunc { body, .. } => match body.as_ref() {
+                Expr::EChoose { cases, .. } => {
+                    assert_eq!(cases.len(), 2);
+                    match cases[0].when.as_ref() {
+                        Expr::EEnumPattern {
+                            enum_name,
+                            variant,
+                            bindings,
+                            ..
+                        } => {
+                            assert_eq!(enum_name, "Option");
+                            assert_eq!(variant, "Some");
+                            assert_eq!(bindings, &vec!["v".to_string()]);
+                        }
+                        other => panic!("expected EEnumPattern, got {:?}", other),
+                    }
+                    match cases[1].when.as_ref() {
+                        Expr::EEnumPattern {
+                            enum_name,
+                            variant,
+                            bindings,
+                            ..
+                        } => {
+                            assert_eq!(enum_name, "Option");
+                            assert_eq!(variant, "None");
+                            assert_eq!(bindings, &vec![] as &Vec<String>);
                         }
                         other => panic!("expected EEnumPattern, got {:?}", other),
                     }

@@ -47,7 +47,7 @@ fn is_copy_type(types: &HashMap<String, Vec<FieldDef>>, t: &Typ) -> bool {
                 false
             }
         }
-        Typ::TFunc { .. } => false,
+        Typ::TFunc { .. } | Typ::TShape { .. } => false,
     }
 }
 
@@ -557,8 +557,13 @@ fn merge_saved_with_current(
 pub fn check_program_with(
     defs: &[Def],
     global_safety: &HashMap<String, Safety>,
+    global_enums: &HashMap<String, Vec<crate::ast::EnumVariant>>,
 ) -> Vec<Error> {
-    let (symbol_table, mut errs) = SymbolTable::build_with_errors(defs);
+    let (mut symbol_table, mut errs) = SymbolTable::build_with_errors(defs);
+
+    for (name, variants) in global_enums {
+        symbol_table.register_global_enum(name, &[], variants);
+    }
 
     let types: HashMap<String, Vec<FieldDef>> = defs
         .iter()
@@ -679,7 +684,8 @@ pub fn check_program_with(
             | Def::SImportHere { .. }
             | Def::DCIntro { .. }
             | Def::DImpl { .. }
-            | Def::DEnum { .. } => {}
+            | Def::DEnum { .. }
+            | Def::DShape { .. } => {}
         }
     }
 
@@ -696,7 +702,7 @@ pub fn check_program_with(
 }
 
 pub fn check_program(defs: &[Def]) -> Vec<Error> {
-    check_program_with(defs, &HashMap::new())
+    check_program_with(defs, &HashMap::new(), &HashMap::new())
 }
 
 #[cfg(test)]
@@ -724,6 +730,7 @@ mod tests {
             body: Box::new(body),
             safety,
             is_async: false,
+            type_bounds: vec![],
         }
     }
 

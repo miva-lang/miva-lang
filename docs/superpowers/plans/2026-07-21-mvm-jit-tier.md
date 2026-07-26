@@ -31,7 +31,7 @@
 
 ## Task 3: Create `miva-vm/src/jit/opcodes.rs`
 
-- [ ] Implement `compile_function` with full opcode handling:
+- [x] Implement `compile_function` with full opcode handling:
   - PushI64, PushF64, PushBool, PushNull, PushUnit
   - Dup, Drop
   - I64Add, I64Sub, I64Mul, I64Div, I64Rem

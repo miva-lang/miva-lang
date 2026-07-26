@@ -248,8 +248,9 @@ fn builtin_return_typ(name: &str) -> Option<Typ> {
     }
 }
 
-fn build_func_sigs(defs: &[Def]) -> HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)> {
+fn build_func_sigs(defs: &[Def]) -> (HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>, HashMap<String, Vec<String>>) {
     let mut sigs = HashMap::new();
+    let mut type_bounds_map = HashMap::new();
     for def in defs {
         match def {
             Def::DFunc {
@@ -257,6 +258,7 @@ fn build_func_sigs(defs: &[Def]) -> HashMap<String, (Vec<String>, Vec<Param>, Op
                 type_params,
                 params,
                 returns,
+                type_bounds,
                 ..
             } => {
                 // Normalize generic types so func_sigs contains TGenericParam
@@ -272,6 +274,10 @@ fn build_func_sigs(defs: &[Def]) -> HashMap<String, (Vec<String>, Vec<Param>, Op
                         normalized_returns,
                     ),
                 );
+                // Also store type bounds for shape checking
+                if !type_bounds.is_empty() {
+                    type_bounds_map.insert(name.clone(), type_bounds.clone());
+                }
             }
             Def::DCFuncUnsafe {
                 name,
@@ -284,7 +290,36 @@ fn build_func_sigs(defs: &[Def]) -> HashMap<String, (Vec<String>, Vec<Param>, Op
             _ => {}
         }
     }
-    sigs
+    (sigs, type_bounds_map)
+}
+
+/// Check if a struct's fields satisfy a shape's field requirements.
+/// Returns (satisfied: bool, missing_field: Option<String>, type_mismatch: Option<(String, String, String)>).
+fn satisfies_shape(
+    struct_fields: &HashMap<&str, &Typ>,
+    shape_fields: &[FieldDef],
+    subst: &HashMap<String, Typ>,
+) -> (bool, Option<String>, Option<(String, String, String)>) {
+    for sf in shape_fields {
+        let resolved_type = if subst.is_empty() {
+            &sf.typ
+        } else {
+            &resolve_type(&sf.typ, subst)
+        };
+        match struct_fields.get(sf.name.as_str()) {
+            Some(struct_field_type) => {
+                if !types_equal(resolved_type, struct_field_type) {
+                    return (false, None, Some((
+                        sf.name.clone(),
+                        format!("{:?}", resolved_type),
+                        format!("{:?}", struct_field_type),
+                    )));
+                }
+            }
+            None => return (false, Some(sf.name.clone()), None),
+        }
+    }
+    (true, None, None)
 }
 
 fn build_struct_map(
@@ -316,6 +351,37 @@ fn build_struct_map(
         }
     }
     (structs, struct_type_params)
+}
+
+fn build_shape_map(
+    defs: &[Def],
+) -> (HashMap<String, Vec<FieldDef>>, HashMap<String, Vec<String>>) {
+    let mut shapes = HashMap::new();
+    let mut shape_type_params = HashMap::new();
+    for def in defs {
+        if let Def::DShape {
+            name,
+            fields,
+            type_params,
+            ..
+        } = def
+        {
+            let normalized = if type_params.is_empty() {
+                fields.clone()
+            } else {
+                fields
+                    .iter()
+                    .map(|f| FieldDef {
+                        name: f.name.clone(),
+                        typ: normalize_typ(&f.typ, type_params),
+                    })
+                    .collect()
+            };
+            shapes.insert(name.clone(), normalized);
+            shape_type_params.insert(name.clone(), type_params.clone());
+        }
+    }
+    (shapes, shape_type_params)
 }
 
 fn build_enum_maps(
@@ -2018,7 +2084,13 @@ fn infer_type(
 }
 
 pub fn check_program(defs: &[Def]) -> Vec<Error> {
-    check_program_with(defs, &std::collections::HashMap::new())
+    check_program_with(
+        defs,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
 }
 
 /// Like [`check_program`], but also consults `global` — a map of
@@ -2029,8 +2101,11 @@ pub fn check_program(defs: &[Def]) -> Vec<Error> {
 pub fn check_program_with(
     defs: &[Def],
     global: &HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>,
+    global_enums: &HashMap<String, Vec<crate::ast::EnumVariant>>,
+    global_shapes: &HashMap<String, Vec<FieldDef>>,
+    global_shape_type_params: &HashMap<String, Vec<String>>,
 ) -> Vec<Error> {
-    let mut func_sigs = build_func_sigs(defs);
+    let (mut func_sigs, mut func_type_bounds) = build_func_sigs(defs);
     // Merge cross-module signatures (qualified keys). Local (per-file)
     // signatures take precedence on collisions.
     for (k, v) in global {
@@ -2554,6 +2629,7 @@ mod tests {
             body: Box::new(body),
             safety,
             is_async: false,
+            type_bounds: vec![],
         }
     }
 
@@ -3685,6 +3761,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
             make_func(
                 "main",
@@ -3729,6 +3806,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
             make_func(
                 "main",
@@ -3773,6 +3851,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
             make_func(
                 "main",
@@ -3829,6 +3908,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
         ];
         let errs = check_program(&defs);
@@ -3893,6 +3973,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
         ];
         let errs = check_program(&defs);
@@ -3934,6 +4015,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
         ];
         let errs = check_program(&defs);
@@ -4006,6 +4088,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
         ];
         let errs = check_program(&defs);
@@ -4036,6 +4119,7 @@ mod tests {
                 body: Box::new(Expr::EInt { loc: Loc { line: 3, col: 1 }, value: 0 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
             Def::DFunc {
                 loc: Loc { line: 4, col: 1 },
@@ -4074,6 +4158,7 @@ mod tests {
                 }),
                 safety: Safety::Safe,
                 is_async: false,
+            type_bounds: vec![],
             },
         ];
         let errs = check_program(&defs);

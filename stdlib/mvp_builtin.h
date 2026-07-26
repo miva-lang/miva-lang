@@ -19,6 +19,7 @@
 #include <utility>
 #include <future>
 #include <thread>
+#include <mutex>
 #include <functional>
 
 #include "mvp_copyable.h"
@@ -280,6 +281,35 @@ inline auto mvp_async_spawn(F&& fn) -> mvp_future<decltype(fn())> {
 template <typename T>
 inline T mvp_async_await(mvp_future<T> const& f) {
     return f.handle->get();
+}
+
+// ── Mutex ──────────────────────────────────────────────────────────────────
+//
+// A mutex handle is a heap-allocated `std::mutex` wrapped in a unique_ptr.
+// The handle must be freed exactly once via mvp_mutex_free.
+// Passing a null handle to any mutex function triggers a panic.
+struct mvp_mutex {
+    std::unique_ptr<std::mutex> m;
+    mvp_mutex() : m(std::make_unique<std::mutex>()) {}
+};
+
+inline mvp_builtin_ptrany mvp_mutex_new() {
+    return static_cast<mvp_builtin_ptrany>(new mvp_mutex());
+}
+
+inline void mvp_mutex_lock(mvp_builtin_ptrany h) {
+    if (!h) mvp_panic("mutex: null handle");
+    static_cast<mvp_mutex*>(h)->m->lock();
+}
+
+inline void mvp_mutex_unlock(mvp_builtin_ptrany h) {
+    if (!h) mvp_panic("mutex: null handle");
+    static_cast<mvp_mutex*>(h)->m->unlock();
+}
+
+inline void mvp_mutex_free(mvp_builtin_ptrany h) {
+    if (!h) mvp_panic("mutex: null handle");
+    delete static_cast<mvp_mutex*>(h);
 }
 
 // ── JSON parsing & serialization ──────────────────────────────────────────

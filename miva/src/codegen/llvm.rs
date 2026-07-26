@@ -138,6 +138,10 @@ fn runtime_declarations() -> String {
     decls.push_str("declare void @miva_ptr_set_ptr(ptr, ptr)\n");
     decls.push_str("declare i64 @miva_async_await(i64)\n");
     decls.push_str("declare i64 @miva_async_spawn(ptr, i64)\n");
+    decls.push_str("declare ptr @miva_mutex_new()\n");
+    decls.push_str("declare void @miva_mutex_lock(i64)\n");
+    decls.push_str("declare void @miva_mutex_unlock(i64)\n");
+    decls.push_str("declare void @miva_mutex_free(i64)\n");
     decls.push_str("declare i64 @miva_json_parse(ptr)\n");
     decls.push_str("declare i64 @miva_json_kind(i64)\n");
     decls.push_str("declare i64 @miva_json_bool(i64)\n");
@@ -237,6 +241,10 @@ fn map_builtin(name: &str, current_module: Option<&str>) -> String {
         "json_object_find" => "@miva_json_object_find".into(),
         "json_free" => "@miva_json_free".into(),
         "json_stringify" => "@miva_json_stringify".into(),
+        "mutex_new" => "@miva_mutex_new".into(),
+        "mutex_lock" => "@miva_mutex_lock".into(),
+        "mutex_unlock" => "@miva_mutex_unlock".into(),
+        "mutex_free" => "@miva_mutex_free".into(),
         "xml_parse" => "@miva_xml_parse".into(),
         "xml_kind" => "@miva_xml_kind".into(),
         "xml_tag" => "@miva_xml_tag".into(),
@@ -495,7 +503,7 @@ fn is_enum_value_expr(expr: &Expr) -> bool {
     match expr {
         Expr::EFieldAccess { field, expr, .. } => {
             !field.chars().all(|c| c.is_ascii_digit())
-                && matches!(expr.as_ref(), Expr::EVar { .. })
+                && matches!(expr.as_ref(), Expr::EVar { name, .. } if name.chars().next().map_or(false, |c| c.is_uppercase()))
         }
         Expr::ECall { name, args, .. } => {
             if name.matches('.').count() == 1 {
@@ -945,6 +953,7 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                 let vr = &ctx.var_reloads;
                 vr.keys().filter(|name| {
                     var_reloads_before.get(*name).is_some() &&
+                    ctx.var_addrs.contains_key(*name) &&
                     (var_reloads_after_then.get(*name) != var_reloads_before.get(*name) ||
                      vr.get(*name) != var_reloads_before.get(*name))
                 }).cloned().collect()
@@ -983,6 +992,7 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                 let vr = &ctx.var_reloads;
                 vr.keys().filter(|name| {
                     var_reloads_before.get(*name).is_some() &&
+                    ctx.var_addrs.contains_key(*name) &&
                     var_reloads_before.get(*name) != vr.get(*name)
                 }).cloned().collect()
             };
@@ -1003,6 +1013,7 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                 let vr = &ctx.var_reloads;
                 vr.keys().filter(|name| {
                     var_reloads_before.get(*name).is_some() &&
+                    ctx.var_addrs.contains_key(*name) &&
                     var_reloads_before.get(*name) != vr.get(*name)
                 }).cloned().collect()
             };
@@ -1054,6 +1065,7 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                 let vr = &ctx.var_reloads;
                 vr.keys().filter(|name| {
                     var_reloads_before.get(*name).is_some() &&
+                    ctx.var_addrs.contains_key(*name) &&
                     var_reloads_before.get(*name) != vr.get(*name)
                 }).cloned().collect()
             };
@@ -1105,11 +1117,13 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                 return load;
             } else if let Expr::EVar { name: enum_name, .. } = fexpr.as_ref() {
                 if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
-                    // Enum discriminant: `Shape.Circle` in `when (Shape.Circle)`
-                    // evaluates to a unit enum value (tag-only) via the generated
-                    // `@Shape_Circle_unit()` constructor. Enum type names start
-                    // uppercase in Miva, so `p.x` (lowercase var) is a normal
-                    // struct field access handled below.
+                    let ctor_name = format!("{}_{}_unit", enum_name, field);
+                    if !ctx.enum_defs.contains_key(enum_name) {
+                        if let Ok(mut guard) = EXTERN_DECLS.lock() {
+                            let decl = format!("declare i64 @{}()", ctor_name);
+                            guard.get_or_insert_with(HashSet::new).insert(decl);
+                        }
+                    }
                     let tmp = ctx.gen_tmp("disc");
                     body.push_str(&format!(
                         "{}{} = call i64 @{}_{}_unit()\n",
@@ -2257,6 +2271,10 @@ fn generate_bridge(_defs: &[Def]) -> String {
     bridge.push_str("struct mvp_async_task {\n  std::mutex mutex;\n  std::condition_variable cv;\n  bool done = false;\n  int64_t result = 0;\n  std::thread thread;\n};\n");
     bridge.push_str("int64_t miva_async_spawn(int64_t (*fn)(int64_t), int64_t arg_struct_ptr) {\n  auto* task = new mvp_async_task();\n  task->thread = std::thread([task, fn, arg_struct_ptr]() {\n    int64_t r = fn(arg_struct_ptr);\n    free((void*)(intptr_t)arg_struct_ptr);\n    {\n      std::lock_guard<std::mutex> lk(task->mutex);\n      task->result = r;\n      task->done = true;\n    }\n    task->cv.notify_one();\n  });\n  return (int64_t)(intptr_t)task;\n}\n");
     bridge.push_str("int64_t miva_async_await(int64_t handle) {\n  auto* task = (mvp_async_task*)(intptr_t)handle;\n  {\n    std::unique_lock<std::mutex> lk(task->mutex);\n    task->cv.wait(lk, [&] { return task->done; });\n  }\n  int64_t r = task->result;\n  task->thread.join();\n  delete task;\n  return r;\n}\n");
+    bridge.push_str("void* miva_mutex_new() { return mvp_mutex_new(); }\n");
+    bridge.push_str("void miva_mutex_lock(int64_t h) { mvp_mutex_lock((void*)(intptr_t)h); }\n");
+    bridge.push_str("void miva_mutex_unlock(int64_t h) { mvp_mutex_unlock((void*)(intptr_t)h); }\n");
+    bridge.push_str("void miva_mutex_free(int64_t h) { mvp_mutex_free((void*)(intptr_t)h); }\n");
     bridge.push_str("}\n");
     bridge
 }

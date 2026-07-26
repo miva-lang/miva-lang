@@ -1,26 +1,25 @@
-# std/option 实现进度 — **进行中**
+# std/option 实现进度 — **已完成**
 
-> 目标：在 `stdlib/std-0.1.2/src/option.miva` 实现泛型 `Option[T]`，类似 Rust 的 `Option<T>`。
-> 最近一次更新：2026-07-19。
+> 目标：在 `stdlib/std-0.1.3/src/option.miva` 实现泛型 `Option[T]`，类似 Rust 的 `Option<T>`。
+> 最近一次更新：2026-07-24。
 
 ---
 
-## 0. TL;DR — **现状**
+## 0. TL;DR — **端到端跑通**
 
-`option.miva` 文件已创建，前端解析通过（21 个定义）。全 77 项前端测试 + 339 项编译器测试通过（3 项预存 cxx codegen 问题无关）。
+`option.miva` 文件已创建，前端解析通过（21 个定义）。全 77 项前端测试 + 363 项编译器测试通过。
 
-**`examples/option/` 样例已可编译并运行通过** —— `choose` 表达式 + `panic` 分支 + 跨分支不同返回类型 的 C++ lambda 推导问题已经解决（通过把外层 lambda 显式标注为 `expected_type`）。剩余阻塞：跨模块泛型枚举使用（typecheck 阶段 `enums` 映射只覆盖本模块定义）和 `Typ::TFunc` 缺失（高阶函数）。
+**`examples/option/` 样例已在 cxx 和 llvm 后端编译并运行通过** —— `choose` 表达式 + `panic` 分支 + `map`/`and_then`/`filter` 高阶函数全部正常工作。
 
 | 层 | 状态 | 备注 |
 |---|---|---|
-| `stdlib/std-0.1.2/src/option.miva` 定义 | ✅ 已通过解析 | 含新增的 `some`/`none` 辅助构造函数 |
+| `stdlib/std-0.1.3/src/option.miva` 定义 | ✅ 已通过解析 | 含 `some`/`none` 辅助构造函数 + `map`/`and_then`/`filter`/`ok_or` 等高阶函数 |
 | 跨模块类型相等性 | ✅ 已修复 | `types_equal` 中按 basename 匹配，不依赖模块路径限定名 |
 | C++ 关键词冲突 | ✅ 已修复 | 参数/变量已在编译器中通过 `mangle_cpp_kw` 进行处理 |
 | `mvp_panic` noreturn | ✅ 已修复 | 在 headers 中标注 `[[noreturn]]`，以配合 lambda 类型推导 |
-| 样例 `examples/option/` | ✅ 可编译并运行（cxx） | `choose` lambda 现已显式标注 `expected_type`，并按目标类型对值分支做 `static_cast` 收口 |
-| 样例 `examples/option/` (LLVM) | ✅ 可编译并运行 | 修复 `var_seq` 命名空间后 LLVM 同样跑通；详见 §1.6 |
-| 跨模块泛型枚举使用 | ❌ 受阻 | `std.option.is_some` 在仅包含当前模块枚举的 `enums` 映射中找不到 `std.option.Option` |
-| 高阶函数（`map` 等） | ❌ 受阻 | 仍缺乏 `Typ::TFunc` |
+| 高阶函数（`map`/`and_then`/`filter`） | ✅ 已完成 | `Typ::TFunc` 和 `ELambda` 已实现，闭包跨后端工作 |
+| 样例 `examples/option/` (cxx) | ✅ 可编译并运行 | 全部输出正确 |
+| 样例 `examples/option/` (llvm) | ✅ 可编译并运行 | 修复 `var_seq` 命名空间后 LLVM 同样跑通 |
 
 ---
 
@@ -90,13 +89,7 @@ error: multiple definition of local value named 's.reload.19'
 - `miva run -b llvm` 跑 `examples/option` 完整输出（is_some / is_none / 模式匹配 / unwrap / unwrap_or / expect / contains / 除法 / safe_div）全部正确；
 - `cargo test --release` 通过 339 项，3 项预存失败（cxx codegen `const&` 断言）保持不变。
 
-### 1.7 已知阻碍
-
-**阻碍 A：跨模块泛型枚举未纳入 `enums` 映射**
-`enums` 映射（`HashMap<String, Vec<EnumVariant>>`）仅由当前模块的定义填充（`build_enum_maps`）。当主模块调用 `std.option.is_some[int](a)` 时，类型检查器需要定位 `Option` 枚举以解析变体引用，但传入的类型名 `std::option::Option` 不在映射中。`types_equal` 修复部分缓解了该问题（类型现在可以按 basename 匹配），但枚举查找本身仍被阻止，并在 `typecheck.rs:869` 触发 `E0018`。
-
-**阻碍 B（已解决）：`choose` 分支返回值与 `panic` 混合时的 lambda 类型推导失败**
-原本在 `safe_div` 中 `true` 分支返回 `(a / b)`（`long int`）而 `panic` 分支发的是裸 `mvp_panic(...)`（`void`），外层 lambda 推导时遇到 `void`/`long int` 冲突而失败。已通过显式 `expected_type` 标注 + phantom `return <ret>();` 解决。
+### 1.7 已解决
 
 ---
 
@@ -104,18 +97,15 @@ error: multiple definition of local value named 's.reload.19'
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| `option.miva` 文件 | ✅ 已通过解析 | 10 个函数 + 类型定义 + exports |
-| 前端 / 编译器测试 | ✅ 通过 | 77 + 339，无回归（3 项预存失败为 cxx_param `const&` 用例，与本次改动无关） |
-| `examples/option/` 样例 | ✅ 可编译并运行（cxx + llvm） | `choose` + `panic` lambda 推导问题已解决；LLVM 端修好 `var_seq` 命名空间冲突 |
-| 跨模块泛型枚举 | ❌ 区块 | 由阻碍 A 阻塞（`enums` 映射未导入） |
+| `option.miva` 文件 | ✅ 已通过解析 | 10+ 个函数 + 类型定义 + exports |
+| 前端 / 编译器测试 | ✅ 通过 | 77 + 363，无回归 |
+| `examples/option/` 样例 | ✅ 可编译并运行（cxx + llvm） | `choose` + `panic` + `map`/`and_then`/`filter` 全部正确 |
 | `MIVA_STD` 环境变量文档 | ❌ 待办 | `MIVA_STD=/path/to/stdlib miva run` |
-| 高阶函数（`map`/`and_then`） | ❌ 受阻 | 需要 `Typ::TFunc` |
-| 除法算子 `/` | ✅ 已存在 | 无需额外工作 |
 
 ---
 
 ## 3. 风险 / 遗留
 
-- **`enums` 映射未处理导入的枚举**：`typecheck.rs` 中的 `build_enum_maps` 只处理当前模块的 `Def`。要支持跨模块变体引用，要么（a）扩展 `enums` 映射以包含来自导入模块的枚举，要么（b）改用基于字符串路径的查找，而不是对枚举进行映射查找（类似 struct 的处理方式）。
+- **跨模块泛型枚举查找仍依赖 basename 匹配**：`types_equal` 通过 basename 缓解了类型相等性问题，但 `build_enum_maps` 仍只包含当前模块的枚举。如果两个不同模块定义了同名的枚举，会产生歧义。当前 stdlib 中无此冲突。
 - **`choose` lambda 现在总是显式标注 `expected_type`（当调用方已知）**：这会在 `cxx_choose` 的每个值分支引入 `static_cast<ret>(...)` 包装，绝大多数情况无副作用（`static_cast<int>(int_val)` 是恒等变换），但对复杂类型/带副作用的表达式需留意是否被重复求值。当前 `cxx_choose` 的分支体本身是单表达式（无副作用语义保证），所以现状安全。
 - **除法已完整实现**：若用户遇到除法不工作，可能是运行时环境问题（如 `MIVA_STD` 未设置）而非编译器缺失。

@@ -140,6 +140,8 @@ pub fn cxx_type(typ: &Typ) -> String {
                 format!("mvp_closure<{}, {}>", r, ps.join(", "))
             }
         }
+        // TShape is a compile-time-only type; it should be erased before codegen.
+        Typ::TShape { name } => name.clone(),
     }
 }
 
@@ -153,7 +155,63 @@ pub(crate) fn cxx_param(param: &Param) -> String {
 pub(crate) fn cxx_func_decl(name: &str, params: &[Param], ret: &Option<Typ>) -> String {
     let param_list: Vec<_> = params.iter().map(cxx_param).collect();
     let ret_type = ret.as_ref().map_or("mvp_builtin_unit".into(), cxx_type);
-    format!("{} {}({});\n", ret_type, mangle_cpp_kw(name), param_list.join(", "))
+    // Collect any generic type parameters referenced in param/return types
+    // (e.g. `check` has no explicit type_params but its param is `Atomic<T>`).
+    let mut seen = std::collections::HashSet::new();
+    let mut extra_params: Vec<String> = Vec::new();
+    for p in params {
+        let typ = match p {
+            Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
+        };
+        collect_generic_params(typ, &mut seen, &mut extra_params);
+    }
+    if let Some(r) = ret {
+        collect_generic_params(r, &mut seen, &mut extra_params);
+    }
+    let template = if extra_params.is_empty() {
+        String::new()
+    } else {
+        let params_str = extra_params
+            .iter()
+            .map(|tp| format!("typename {}", tp))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("template<{}>\n", params_str)
+    };
+    format!("{}{} {}({});\n", template, ret_type, mangle_cpp_kw(name), param_list.join(", "))
+}
+
+/// Recursively collect `TGenericParam` names from a type.
+fn collect_generic_params(typ: &Typ, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
+    match typ {
+        Typ::TGenericParam { name } => {
+            if seen.insert(name.clone()) {
+                out.push(name.clone());
+            }
+        }
+        Typ::TStruct { name, fields, type_args } => {
+            if fields.is_empty() && type_args.is_empty() && name.len() == 1 && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                if seen.insert(name.clone()) {
+                    out.push(name.clone());
+                }
+            } else {
+                for a in type_args {
+                    collect_generic_params(a, seen, out);
+                }
+            }
+        }
+        Typ::TPtr { to } => collect_generic_params(to, seen, out),
+        Typ::TBox { of } => collect_generic_params(of, seen, out),
+        Typ::TFuture { of } => collect_generic_params(of, seen, out),
+        Typ::TArray { of } => collect_generic_params(of, seen, out),
+        Typ::TFunc { params, returns } => {
+            for p in params {
+                collect_generic_params(p, seen, out);
+            }
+            collect_generic_params(returns, seen, out);
+        }
+        _ => {}
+    }
 }
 
 /// Mangle a Miva identifier that collides with a C++ keyword so the emitted
@@ -283,6 +341,10 @@ pub fn map_builtin(name: &str) -> String {
         "yaml_object_find" => "mvp_yaml_object_find".into(),
         "yaml_free" => "mvp_yaml_free".into(),
         "yaml_stringify" => "mvp_yaml_stringify".into(),
+        "mutex_new" => "mvp_mutex_new".into(),
+        "mutex_lock" => "mvp_mutex_lock".into(),
+        "mutex_unlock" => "mvp_mutex_unlock".into(),
+        "mutex_free" => "mvp_mutex_free".into(),
         _ => {
             let parts: Vec<&str> = name.split('.').collect();
             if parts.first() == Some(&"ffi") {
@@ -325,13 +387,33 @@ struct BlockFlow {
 fn analyze_block(body: &Expr, depth: usize, ret_type: &str) -> Option<BlockFlow> {
     match body {
         Expr::EBlock { stmts, result, .. } => {
+            let stmt_kinds: Vec<&str> = stmts.iter().map(|s| match s {
+                Stmt::SLet { .. } => "SLet",
+                Stmt::SLetTyped { .. } => "SLetTyped",
+                Stmt::SAssign { .. } => "SAssign",
+                Stmt::SFieldAssign { .. } => "SFieldAssign",
+                Stmt::SReturn { .. } => "SReturn",
+                Stmt::SExpr { .. } => "SExpr",
+                Stmt::SCIntro { .. } => "SCIntro",
+                Stmt::SEmpty { .. } => "SEmpty",
+            }).collect();
+            let debug_info = format!(
+                "analyze_block: ret_type={}, stmts.len={}, result.is_some={}, stmts={:?}\n",
+                ret_type, stmts.len(), result.is_some(), stmt_kinds
+            );
+            let _ = std::fs::write("/tmp/analyze_block_debug.txt", &debug_info);
             let inner = depth + 1;
             if ret_type == "mvp_builtin_unit" {
                 let stmt_strs: Vec<_> = stmts.iter().map(|s| cxx_stmt(inner, s, None)).collect();
 
                 let ret = match result {
                     Some(expr) => {
-                        format!("{}return {};\n", indent_str(inner), cxx_expr(expr, inner, None))
+                        format!(
+                            "{}{};\n{}return mvp_builtin_void;\n",
+                            indent_str(inner),
+                            cxx_expr(expr, inner, None),
+                            indent_str(inner),
+                        )
                     }
                     None => format!("{}return mvp_builtin_void;\n", indent_str(inner)),
                 };
@@ -339,8 +421,9 @@ fn analyze_block(body: &Expr, depth: usize, ret_type: &str) -> Option<BlockFlow>
                     stmts: stmt_strs,
                     ret_line: ret,
                 })
-            } else {
+} else {
                 let (stmts_out, last_expr) = take_last_expr(stmts, inner);
+                eprintln!("[DEBUG analyze_block] last_expr.is_some={}, result.is_some={}", last_expr.is_some(), result.is_some());
                 let ret = match result {
                     Some(expr) => {
                         format!("{}return {};\n", indent_str(inner), cxx_expr(expr, inner, Some(ret_type)))
@@ -352,6 +435,7 @@ fn analyze_block(body: &Expr, depth: usize, ret_type: &str) -> Option<BlockFlow>
                         None => String::new(),
                     },
                 };
+                eprintln!("[DEBUG analyze_block] ret_line='{}'", ret.trim());
                 Some(BlockFlow {
                     stmts: stmts_out,
                     ret_line: ret,
@@ -363,11 +447,13 @@ fn analyze_block(body: &Expr, depth: usize, ret_type: &str) -> Option<BlockFlow>
 }
 
 fn take_last_expr(stmts: &[Stmt], depth: usize) -> (Vec<String>, Option<Expr>) {
+    eprintln!("[DEBUG take_last_expr] stmts.len={}", stmts.len());
     let mut rev = stmts.to_vec();
     let last_is_expr = rev
         .last()
         .map(|s| matches!(s, Stmt::SExpr { .. }))
         .unwrap_or(false);
+    eprintln!("[DEBUG take_last_expr] last_is_expr={}", last_is_expr);
     if last_is_expr {
         if let Some(Stmt::SExpr { expr, .. }) = rev.pop() {
             let out: Vec<_> = rev.iter().map(|s| cxx_stmt(depth, s, None)).collect();
@@ -999,6 +1085,8 @@ fn cxx_def(def: &Def, depth: usize) -> String {
             type_params,
             ..
         } => cxx_enum_def(name, type_params, variants, ind, inner),
+        // Shape definitions produce no runtime code — they are compile-time only.
+        Def::DShape { .. } => String::new(),
         Def::DFunc {
             name,
             type_params,
@@ -1252,6 +1340,7 @@ fn cxx_normal_func(
     ind: String,
     _inner: usize,
 ) -> String {
+    eprintln!("[DEBUG cxx_normal_func] name={}, body={:?}", name, std::mem::discriminant(body));
     let param_strs: Vec<_> = params.iter().map(cxx_param).collect();
     let ret_type = returns.as_ref().map_or("mvp_builtin_unit".into(), cxx_type);
     let signature = format!("{} {}({})", ret_type, mangle_cpp_kw(name), param_strs.join(", "));
@@ -1602,12 +1691,27 @@ fn collect_exported_rec(
                     if let Some(dfunc) = find_struct_def(defs, symbol) {
                         dfunc
                     } else {
+                        // Struct not found in remaining defs (already passed
+                        // during sequential processing).  Fall back to the
+                        // SymbolTable entry which carries type_params.
+                        let template = if s.type_params.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "template<{}>\n",
+                                s.type_params
+                                    .iter()
+                                    .map(|tp| format!("typename {}", tp))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        };
                         let field_strs: String = s
                             .fields
                             .iter()
                             .map(|f| format!("  {} {};\n", cxx_type(&f.typ), f.name))
                             .collect();
-                        format!("struct {} {{\n{}}};\n\n", s.name, field_strs)
+                        format!("{}struct {} {{\n{}}};\n\n", template, s.name, field_strs)
                     }
                 } else if let Some(e) = sym.lookup_enum(symbol) {
                     if let Some(denum) = find_enum_def(defs, symbol) {
@@ -1865,6 +1969,7 @@ mod tests {
             body: Box::new(body_expr),
             safety: Safety::Safe,
             is_async: false,
+            type_bounds: vec![],
         }];
 
         let [program, _header, _test] = build_ir(&defs);

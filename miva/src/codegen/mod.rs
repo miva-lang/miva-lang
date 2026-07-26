@@ -65,6 +65,8 @@ pub struct FuncSig {
     pub type_params: Vec<String>,
     pub returns: Option<Typ>,
     pub is_async: bool,
+    #[allow(dead_code)]
+    pub type_bounds: Vec<String>,
 }
 
 /// Extract function signatures from all defs (cross-file) for type-aware codegen.
@@ -72,11 +74,12 @@ pub fn collect_func_sigs(defs: &[Def]) -> HashMap<String, FuncSig> {
     let mut sigs = HashMap::new();
     for def in defs {
         match def {
-            Def::DFunc { name, type_params, returns, is_async, .. } => {
+            Def::DFunc { name, type_params, returns, is_async, type_bounds, .. } => {
                 sigs.entry(name.clone()).or_insert(FuncSig {
                     type_params: type_params.clone(),
                     returns: returns.clone(),
                     is_async: *is_async,
+                    type_bounds: type_bounds.clone(),
                 });
             }
             Def::DCFuncUnsafe { name, returns, .. } => {
@@ -84,6 +87,7 @@ pub fn collect_func_sigs(defs: &[Def]) -> HashMap<String, FuncSig> {
                     type_params: vec![],
                     returns: returns.clone(),
                     is_async: false,
+                    type_bounds: vec![],
                 });
             }
             _ => {}

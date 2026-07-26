@@ -1,0 +1,22 @@
+module main;
+
+import "crossmod/lib";
+
+main = () => {
+    active := Status.Active;
+    inactive := Status.Inactive;
+
+    choose (active) {
+        when (Status.Active) { printlns!("main: active is Active"); }
+        when (Status.Inactive) { printlns!("main: active is Inactive"); }
+        otherwise { printlns!("main: active is unknown"); }
+    };
+
+    choose (inactive) {
+        when (Status.Active) { printlns!("main: inactive is Active"); }
+        when (Status.Inactive) { printlns!("main: inactive is Inactive"); }
+        otherwise { printlns!("main: inactive is unknown"); }
+    };
+
+    printlns!("ok");
+}

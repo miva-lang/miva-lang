@@ -1,0 +1,34 @@
+module main;
+import "std/atomic";
+
+unsafe main = () => {
+  mut counter := std.atomic.new[int]();
+  printlns!("created atomic, initial value =", std.atomic.load[int](counter));
+
+  std.atomic.store[int](counter, 42);
+  printlns!("after store(42), load =", std.atomic.load[int](counter));
+
+  std.atomic.store[int](counter, 100);
+  printlns!("after store(100), load =", std.atomic.load[int](counter));
+
+  mut old := std.atomic.swap[int](counter, 999);
+  printlns!("swap to 999, returned old =", old);
+  printlns!("current value =", std.atomic.load[int](counter));
+
+  mut succeeded := std.atomic.compare_exchange[int](counter, 999, 777);
+  printlns!("cas(999->777) succeeded =", succeeded);
+
+  mut failed := std.atomic.compare_exchange[int](counter, 999, 888);
+  printlns!("cas(999->888) succeeded =", failed);
+  printlns!("value unchanged =", std.atomic.load[int](counter));
+
+  std.atomic.store[int](counter, 50);
+  mut before := std.atomic.fetch_add[int](counter, 10);
+  printlns!("fetch_add(10) returned =", before, ", now =", std.atomic.load[int](counter));
+
+  mut before2 := std.atomic.fetch_sub[int](counter, 5);
+  printlns!("fetch_sub(5) returned =", before2, ", now =", std.atomic.load[int](counter));
+
+  std.atomic.free[int](counter);
+  println("atomic demo ok");
+}

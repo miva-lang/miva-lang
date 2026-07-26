@@ -1,0 +1,17 @@
+module main;
+
+import "std/mutex";
+
+unsafe main = () => {
+  m := std.mutex.create();
+  printlns!("created mutex");
+
+  std.mutex.lock(m);
+  printlns!("locked");
+
+  std.mutex.unlock(m);
+  printlns!("unlocked");
+
+  std.mutex.free(m);
+  printlns!("freed");
+}

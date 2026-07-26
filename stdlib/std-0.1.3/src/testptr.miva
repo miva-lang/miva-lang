@@ -1,0 +1,8 @@
+module std.testptr;
+
+unsafe get[T] = (buf: ptrany): T => {
+  let slot ptr<T> = (buf as ptr<T>);
+  return deref slot;
+}
+
+export get;

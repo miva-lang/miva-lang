@@ -92,6 +92,7 @@ pub enum Token<'input> {
     Implements,
     Macro,
     Enum,
+    Shape,
     Dollar,
 }
 
@@ -650,6 +651,7 @@ impl<'input> Iterator for Lexer<'input> {
                         "impl" => Token::Implements,
                         "macro" => Token::Macro,
                         "enum" => Token::Enum,
+                        "shape" => Token::Shape,
                         "true" => Token::BoolLit(true),
                         "false" => Token::BoolLit(false),
                         _ => Token::Ident(ident),

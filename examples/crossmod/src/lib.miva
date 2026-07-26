@@ -1,0 +1,14 @@
+module lib;
+
+Status = enum {
+    Active,
+    Inactive
+}
+
+make_active = (): Status => Status.Active
+make_inactive = (): Status => Status.Inactive
+
+is_active = (s: Status): bool => choose (s) {
+    when (Status.Active) { return true; }
+    otherwise { return false; }
+}

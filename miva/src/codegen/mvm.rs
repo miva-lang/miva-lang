@@ -130,6 +130,8 @@ impl MvmCodegen {
             ("yaml_stringify", 78),
             ("ptr_alloc", 79), ("ptr_free", 80), ("ptr_realloc", 81),
             ("ptr_offset", 82), ("ptr_set", 83), ("ptr_ref", 84),
+            ("mutex_new", 85), ("mutex_lock", 86), ("mutex_unlock", 87),
+            ("mutex_free", 88),
         ];
         for (name, idx) in builtins {
             builtin_indices.insert(name.to_string(), idx);
@@ -340,25 +342,46 @@ impl MvmCodegen {
         let mut cg = MvmCodegen::new();
         cg.collect_struct_info(defs);
 
-        // Pass 1: collect function names and signatures
-        // Store both the bare name (for lookup_name compatibility) and the
-        // fully qualified name (to disambiguate functions with the same name
-        // from different modules, e.g. `free` in both vec.miva and mem.miva).
+        // Pass 1: collect function names and signatures.
+        // Track the current module so we can register functions under their
+        // fully qualified names (e.g. `mvp_std.atomic.free`).  This avoids
+        // collisions when different modules define functions with the same
+        // bare name (`free` in both std.atomic and std.mutex).
+        let mut current_module: Option<String> = None;
         for def in defs {
             match def {
+                Def::DModule { name, .. } => {
+                    // Module names like "std.atomic" → qualified prefix "mvp_std.atomic"
+                    current_module = Some(if name.starts_with("std") {
+                        format!("mvp_{}", name)
+                    } else if name.starts_with("main") {
+                        format!("main.{}", &name[4..])
+                    } else {
+                        name.clone()
+                    });
+                    continue;
+                }
                 Def::DFunc { name, params, is_async, returns, .. } => {
-                    if !cg.func_indices.contains_key(name) {
-                        let idx = cg.functions.len();
-                        cg.func_indices.insert(name.clone(), idx);
-                        // Placeholder function (will be filled in pass 2)
-                        cg.functions.push(MvmFunction {
-                            name_idx: 0,
-                            arity: params.len() as u32,
-                            locals: 0,
-                            is_async: *is_async,
-                            code: Vec::new(),
-                        });
+                    let idx = cg.functions.len();
+                    // Compute the qualified function name so calls like
+                    // `mvp_std.mutex.free` resolve to the correct slot.
+                    let qual_name = current_module.as_ref()
+                        .map(|mod_| format!("{}.{}", mod_, name))
+                        .unwrap_or_else(|| name.clone());
+                    // Register under both the qualified name and the bare name.
+                    cg.func_indices.insert(qual_name.clone(), idx);
+                    let bare = name.rsplit('.').next().unwrap_or(name);
+                    if !cg.func_indices.contains_key(bare) {
+                        cg.func_indices.insert(bare.to_string(), idx);
                     }
+                    // Placeholder function (will be filled in pass 2)
+                    cg.functions.push(MvmFunction {
+                        name_idx: 0,
+                        arity: params.len() as u32,
+                        locals: 0,
+                        is_async: *is_async,
+                        code: Vec::new(),
+                    });
                     // Collect PRef parameter names for reference-parameter
                     // analysis (used by SExpr caller-store-back logic).
                     let ref_param_names: Vec<String> = params
@@ -371,9 +394,12 @@ impl MvmCodegen {
                             }
                         })
                         .collect();
-                    cg.func_ref_params.insert(name.clone(), ref_param_names.clone());
+                    // Use the qualified function name as the key so that
+                    // void_ref_params / func_ref_params lookups inside the
+                    // function body use the right entry.
+                    cg.func_ref_params.insert(qual_name.clone(), ref_param_names.clone());
                     if returns.is_none() && !ref_param_names.is_empty() {
-                        cg.void_ref_params.insert(name.clone(), ref_param_names);
+                        cg.void_ref_params.insert(qual_name, ref_param_names);
                     }
                 }
                 Def::DTest { name, .. } => {
@@ -405,11 +431,24 @@ impl MvmCodegen {
         }
 
         // Pass 2: compile each function body
+        let mut current_module: Option<String> = None;
         for def in defs {
             match def {
+                Def::DModule { name, .. } => {
+                    current_module = Some(if name.starts_with("std") {
+                        format!("mvp_{}", name)
+                    } else if name.starts_with("main") {
+                        format!("main.{}", &name[4..])
+                    } else {
+                        name.clone()
+                    });
+                }
                 Def::DFunc { name, params, returns, body, .. } => {
                     let func_idx = cg.func_indices[name];
-                    cg.current_func_name = name.clone();
+                    let qual_name = current_module.as_ref()
+                        .map(|mod_| format!("{}.{}", mod_, name))
+                        .unwrap_or_else(|| name.clone());
+                    cg.current_func_name = qual_name;
                     cg.compile_function(func_idx, params, body, false, returns);
                 }
                 Def::DTest { name, body, .. } => {
@@ -820,7 +859,9 @@ impl MvmCodegen {
                     self.emit_op(MvmOp::CallHost);
                     self.emit_u32(name_idx);
                     self.emit_u8(args.len() as u8);
-                } else if let Some(&func_idx) = self.func_indices.get(lookup_name) {
+                } else if let Some(&func_idx) = self.func_indices.get(name)
+                    .or_else(|| self.func_indices.get(lookup_name))
+                {
                     for arg in args {
                         self.compile_expr(arg);
                     }
@@ -1256,8 +1297,11 @@ impl MvmCodegen {
                 // ref-param value (instead of Unit). Store it back into
                 // the corresponding local slot.
                 if let Expr::ECall { name, args, .. } = expr.as_ref() {
+                    // Try full qualified name first, fall back to bare name.
                     let lookup_name = name.rsplit('.').next().unwrap_or(name);
-                    if let Some(ref_names) = self.void_ref_params.get(lookup_name) {
+                    let ref_names = self.void_ref_params.get(name)
+                        .or_else(|| self.void_ref_params.get(lookup_name));
+                    if let Some(ref_names) = ref_names {
                         if let Some(first_ref) = ref_names.first() {
                             if let Some(pos) = ref_names.iter().position(|n| n == first_ref) {
                                 if pos < args.len() {

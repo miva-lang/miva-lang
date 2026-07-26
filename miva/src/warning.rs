@@ -359,7 +359,8 @@ fn check_annotations(defs: &[Def]) -> Vec<Warning> {
                 | Def::SImportHere { loc, .. }
                 | Def::DImpl { loc, .. }
                 | Def::DMacro { loc, .. }
-                | Def::DEnum { loc, .. } => loc,
+                | Def::DEnum { loc, .. }
+                | Def::DShape { loc, .. } => loc,
                 // DCMagical and DCIntro don't need annotations
                 Def::DCMagical { .. } | Def::DCIntro { .. } => {
                     prev = Some(cur);
@@ -384,7 +385,8 @@ fn check_annotations(defs: &[Def]) -> Vec<Warning> {
                 | Def::SImportHere { .. }
                 | Def::DImpl { .. }
                 | Def::DMacro { .. }
-                | Def::DEnum { .. } => false,
+                | Def::DEnum { .. }
+                | Def::DShape { .. } => false,
                 // DCMagical/DCIntro already handled above (skipped)
                 Def::DCMagical { .. } | Def::DCIntro { .. } => unreachable!(),
             };
@@ -442,7 +444,8 @@ pub fn get_warnings(defs: &[Def]) -> Vec<Warning> {
             | Def::DCIntro { .. }
             | Def::DImpl { .. }
             | Def::DMacro { .. }
-            | Def::DEnum { .. } => {}
+            | Def::DEnum { .. }
+            | Def::DShape { .. } => {}
         }
     }
 
@@ -481,6 +484,7 @@ mod tests {
             body: Box::new(body),
             safety,
             is_async: false,
+            type_bounds: vec![],
         }
     }
 
@@ -494,6 +498,7 @@ mod tests {
             body: Box::new(body),
             safety,
             is_async: false,
+            type_bounds: vec![],
         }
     }
 

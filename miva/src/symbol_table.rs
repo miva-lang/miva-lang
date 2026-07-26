@@ -4,7 +4,7 @@ use crate::ast::*;
 use crate::error::Error;
 
 #[allow(dead_code)]
-pub const BUILTIN_FUNCTIONS_COUNT: usize = 80;
+pub const BUILTIN_FUNCTIONS_COUNT: usize = 84;
 
 const BUILTIN_FUNCTIONS: &[(&str, Safety)] = &[
     ("print", Safety::Safe),
@@ -87,6 +87,10 @@ const BUILTIN_FUNCTIONS: &[(&str, Safety)] = &[
     ("yaml_object_find", Safety::Safe),
     ("yaml_free", Safety::Safe),
     ("yaml_stringify", Safety::Safe),
+    ("mutex_new", Safety::Unsafe),
+    ("mutex_lock", Safety::Unsafe),
+    ("mutex_unlock", Safety::Unsafe),
+    ("mutex_free", Safety::Unsafe),
 ];
 
 #[derive(Debug, Clone)]
@@ -114,18 +118,28 @@ pub struct EnumEntry {
 }
 
 #[derive(Debug, Clone)]
+pub struct ShapeEntry {
+    pub name: String,
+    pub fields: Vec<FieldDef>,
+    pub type_params: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SymbolTable {
     pub module_name: String,
     pub functions: Vec<FunctionEntry>,
     pub structs: Vec<StructEntry>,
     pub enums: Vec<EnumEntry>,
+    pub shapes: Vec<ShapeEntry>,
     pub exported_functions: Vec<String>,
+    pub exported_shapes: Vec<String>,
     pub files: Vec<String>,
     pub imports: Vec<String>,
 
     function_index: HashMap<String, usize>,
     struct_index: HashMap<String, usize>,
     enum_index: HashMap<String, usize>,
+    shape_index: HashMap<String, usize>,
 }
 
 impl SymbolTable {
@@ -135,12 +149,15 @@ impl SymbolTable {
             functions: Vec::new(),
             structs: Vec::new(),
             enums: Vec::new(),
+            shapes: Vec::new(),
             exported_functions: Vec::new(),
+            exported_shapes: Vec::new(),
             files: Vec::new(),
             imports: Vec::new(),
             function_index: HashMap::new(),
             struct_index: HashMap::new(),
             enum_index: HashMap::new(),
+            shape_index: HashMap::new(),
         }
     }
 
@@ -203,11 +220,24 @@ impl SymbolTable {
                 } => {
                     table.register_enum(name, type_params, variants, loc, &mut errors);
                 }
+                Def::DShape {
+                    name,
+                    fields,
+                    type_params,
+                    loc,
+                } => {
+                    table.register_shape(name, type_params, fields, loc, &mut errors);
+                }
                 Def::SExport { symbol, .. } => {
                     if table.function_index.contains_key(symbol)
                         && !table.exported_functions.contains(symbol)
                     {
                         table.exported_functions.push(symbol.clone());
+                    }
+                    if table.shape_index.contains_key(symbol)
+                        && !table.exported_shapes.contains(symbol)
+                    {
+                        table.exported_shapes.push(symbol.clone());
                     }
                 }
                 Def::SImport { path, .. } => {
@@ -221,7 +251,8 @@ impl SymbolTable {
                 | Def::DMacro { .. }
                 | Def::DCMagical { .. }
                 | Def::DCIntro { .. }
-                | Def::DImpl { .. } => {}
+                | Def::DImpl { .. }
+                | Def::DShape { .. } => {}
             }
         }
 
@@ -321,8 +352,50 @@ impl SymbolTable {
         });
     }
 
+    fn register_shape(
+        &mut self,
+        name: &str,
+        type_params: &[String],
+        fields: &[FieldDef],
+        loc: &Loc,
+        errors: &mut Vec<Error>,
+    ) {
+        if self.shape_index.contains_key(name) {
+            errors.push(Error::new(
+                "E0004",
+                loc,
+                &format!("shape '{}' is already defined", name),
+            ));
+        } else {
+            let idx = self.shapes.len();
+            self.shape_index.insert(name.to_string(), idx);
+        }
+        self.shapes.push(ShapeEntry {
+            name: name.to_string(),
+            type_params: type_params.to_vec(),
+            fields: fields.to_vec(),
+        });
+    }
+
     pub fn lookup_enum(&self, name: &str) -> Option<&EnumEntry> {
         self.enum_index.get(name).map(|&idx| &self.enums[idx])
+    }
+
+    pub fn register_global_enum(
+        &mut self,
+        name: &str,
+        type_params: &[String],
+        variants: &[crate::ast::EnumVariant],
+    ) {
+        if !self.enum_index.contains_key(name) {
+            let idx = self.enums.len();
+            self.enum_index.insert(name.to_string(), idx);
+            self.enums.push(EnumEntry {
+                name: name.to_string(),
+                type_params: type_params.to_vec(),
+                variants: variants.to_vec(),
+            });
+        }
     }
 
     pub fn lookup_function(&self, name: &str) -> Option<&FunctionEntry> {
@@ -333,6 +406,10 @@ impl SymbolTable {
 
     pub fn lookup_struct(&self, name: &str) -> Option<&StructEntry> {
         self.struct_index.get(name).map(|&idx| &self.structs[idx])
+    }
+
+    pub fn lookup_shape(&self, name: &str) -> Option<&ShapeEntry> {
+        self.shape_index.get(name).map(|&idx| &self.shapes[idx])
     }
 
     #[allow(dead_code)]
@@ -359,6 +436,7 @@ mod tests {
             body: Box::new(Expr::EVoid { loc: loc() }),
             safety,
             is_async: false,
+            type_bounds: Vec::new(),
         }
     }
 
@@ -582,6 +660,7 @@ mod tests {
             body: Box::new(Expr::EVoid { loc: loc() }),
             safety: Safety::Safe,
             is_async: false,
+            type_bounds: vec![],
         };
         let st = SymbolTable::build(&[def]);
         assert!(st.functions.len() > BUILTIN_FUNCTIONS_COUNT);

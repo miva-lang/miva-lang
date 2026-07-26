@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::jit::{build_vm_context, JitCompiler, JitTable, VmContext};
 use crate::opcode::Opcode;
@@ -173,6 +172,11 @@ pub struct Mvm {
     /// ptr_alloc(n) allocates n/8 Value slots (since elem_size[T]() = 8 for all T).
     /// pointer = start slot index.
     memory: Vec<Value>,
+    /// Mutex table: handle -> (raw mutex pointer, raw guard pointer or null).
+    /// Both are leaked heap pointers. guard == null means unlocked.
+    mutex_table: HashMap<i64, (*const std::sync::Mutex<()>, *const std::sync::MutexGuard<'static, ()>)>,
+    /// Next mutex handle ID.
+    mutex_next_id: i64,
     /// Host functions loaded from the project's libhost.so (user `unsafe fn`s).
     host_table: HashMap<String, crate::host::HostFn>,
     /// Keeps the dlopen'd library alive for the lifetime of the VM.
@@ -239,6 +243,8 @@ impl Mvm {
             exit_code: 0,
             max_stack: 100_000,
             memory: Vec::new(),
+            mutex_table: HashMap::new(),
+            mutex_next_id: 1,
             host_table: HashMap::new(),
             host_lib: None,
             exec_counts: Vec::new(),
@@ -941,7 +947,6 @@ impl Mvm {
                     return Ok(());
                 }
                 Opcode::RetVal => {
-                    // The return value is already on the stack
                     return Ok(());
                 }
 
@@ -1116,7 +1121,6 @@ impl Mvm {
                             self.push(val);
                         }
                         Value::Int(addr) => {
-                            // Raw memory pointer: load from self.memory[addr]
                             let addr = addr as usize;
                             if addr >= self.memory.len() {
                                 return Err(format!("PtrLoad: out of bounds memory access at {}", addr));
@@ -1134,7 +1138,6 @@ impl Mvm {
                             locals.lock().unwrap()[idx] = val;
                         }
                         Value::Int(addr) => {
-                            // Raw memory pointer: store to self.memory[addr]
                             let addr = addr as usize;
                             if addr >= self.memory.len() {
                                 self.memory.resize(addr + 1, Value::Unit);
@@ -2105,9 +2108,9 @@ impl Mvm {
             // multiples of 8. We divide by 8 to get the number of Value slots.
             79 => {
                 let bytes = self.pop().as_i64().ok_or("ptr_alloc expected int")? as usize;
-                let n = bytes / 8 + (if bytes % 8 > 0 { 1 } else { 0 });
+                let n = bytes / 8;
                 let base = self.memory.len();
-                self.memory.resize(base + n, Value::Unit);
+                self.memory.resize(base + n, Value::Int(0));
                 self.push(Value::Int(base as i64));
             }
             // ptr_free(p) -> free (no-op in flat memory)
@@ -2124,10 +2127,10 @@ impl Mvm {
                     self.memory.len() - p
                 } else { 0 };
                 let base = self.memory.len();
-                self.memory.resize(base + n, Value::Unit);
+                self.memory.resize(base + n, Value::Int(0));
                 let copy_len = old_size.min(n);
                 for i in 0..copy_len {
-                    self.memory[base + i] = std::mem::replace(&mut self.memory[p + i], Value::Unit);
+                    self.memory[base + i] = std::mem::replace(&mut self.memory[p + i], Value::Int(0));
                 }
                 self.push(Value::Int(base as i64));
             }
@@ -2157,6 +2160,57 @@ impl Mvm {
                     return Err("ptr_ref: out of bounds".into());
                 }
                 self.push(self.memory[p].clone());
+            }
+            // mutex_new -> create Mutex<()> on heap, store (raw, null) in table
+            85 => {
+                let id = self.mutex_next_id;
+                self.mutex_next_id += 1;
+                let boxed = Box::new(std::sync::Mutex::new(()));
+                let raw = Box::into_raw(boxed) as *const std::sync::Mutex<()>;
+                self.mutex_table.insert(id, (raw, std::ptr::null()));
+                self.push(Value::Int(id));
+            }
+            // mutex_lock -> pop handle, block until lock acquired, store guard ptr
+            86 => {
+                let handle = self.pop().as_i64().ok_or("mutex_lock expected int handle")?;
+                match self.mutex_table.get_mut(&handle) {
+                    Some((raw, guard_ptr)) => {
+                        if !guard_ptr.is_null() {
+                            return Err(format!("mutex_lock: handle {} already locked (non-reentrant)", handle));
+                        }
+                        let guard = unsafe { raw.as_ref().unwrap().lock().unwrap_or_else(|e| e.into_inner()) };
+                        let leaked = unsafe { std::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(guard) };
+                        *guard_ptr = Box::leak(Box::new(leaked));
+                    }
+                    None => return Err(format!("mutex_lock: invalid handle {}", handle)),
+                }
+                self.push(Value::Unit);
+            }
+            // mutex_unlock -> pop handle, drop guard (set ptr to null)
+            87 => {
+                let handle = self.pop().as_i64().ok_or("mutex_unlock expected int handle")?;
+                match self.mutex_table.get_mut(&handle) {
+                    Some((_raw, guard_ptr)) => {
+                        if guard_ptr.is_null() {
+                            return Err(format!("mutex_unlock: handle {} is not locked", handle));
+                        }
+                        unsafe { drop(Box::from_raw(*guard_ptr as *mut MutexGuard<'static, ()>)) };
+                        *guard_ptr = std::ptr::null();
+                    }
+                    None => return Err(format!("mutex_unlock: invalid handle {}", handle)),
+                }
+                self.push(Value::Unit);
+            }
+            // mutex_free -> pop handle, drop guard (if any) and free mutex memory
+            88 => {
+                let handle = self.pop().as_i64().ok_or("mutex_free expected int handle")?;
+                if let Some((raw, guard_ptr)) = self.mutex_table.remove(&handle) {
+                    if !guard_ptr.is_null() {
+                        unsafe { drop(Box::from_raw(guard_ptr as *mut MutexGuard<'static, ()>)) };
+                    }
+                    unsafe { drop(Box::from_raw(raw as *mut std::sync::Mutex<()>)) };
+                }
+                self.push(Value::Unit);
             }
             _ => return Err(format!("Unknown builtin index: {}", idx)),
         }

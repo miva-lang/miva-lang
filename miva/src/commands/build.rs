@@ -251,6 +251,7 @@ fn compile_file_to_src(
     func_sigs: &std::collections::HashMap<String, crate::codegen::FuncSig>,
     global_type_sigs: &std::collections::HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>,
     global_safety: &std::collections::HashMap<String, Safety>,
+    global_enums: &std::collections::HashMap<String, Vec<crate::ast::EnumVariant>>,
 ) -> Result<(PathBuf, bool)> {
     let cache_key = make_cache_key(file, std_path);
     let ext = backend.extension();
@@ -272,7 +273,7 @@ fn compile_file_to_src(
 
     let source = std::fs::read_to_string(file).unwrap_or_default();
 
-    let sem_errors = semantic::check_program_with(&defs, global_safety);
+    let sem_errors = semantic::check_program_with(&defs, global_safety, global_enums);
     if !sem_errors.is_empty() {
         for err in &sem_errors {
             eprintln!(
@@ -286,7 +287,13 @@ fn compile_file_to_src(
         anyhow::bail!("semantic errors found");
     }
 
-    let type_errors = typecheck::check_program_with(&defs, global_type_sigs);
+    let type_errors = typecheck::check_program_with(
+        &defs,
+        global_type_sigs,
+        global_enums,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    );
     if !type_errors.is_empty() {
         for err in &type_errors {
             eprintln!(
@@ -669,6 +676,10 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
     // e.g. `mvp_std.json.as_string` -> unsafe. Mirrors `global_type_sigs`.
     let mut global_safety: std::collections::HashMap<String, Safety> =
         std::collections::HashMap::new();
+    // Qualified (module-prefixed) enum definitions used to resolve enum
+    // pattern matching across module boundaries, e.g. `Option.Some(v)`.
+    let mut global_enums: std::collections::HashMap<String, Vec<crate::ast::EnumVariant>> =
+        std::collections::HashMap::new();
     // Project name is used to qualify local (non-std) module calls the same
     // way the frontend does (see `util::process_call_path` / import paths).
     let pkg_name = name.clone();
@@ -696,28 +707,31 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
                 match all_func_sigs.entry(name.clone()) {
                     Entry::Occupied(_) => {}
                     Entry::Vacant(v) => {
-                        let (type_params, _params, returns, is_async) = match d {
+                        let (type_params, _params, returns, is_async, type_bounds) = match d {
                             crate::ast::Def::DFunc {
                                 type_params,
                                 params,
                                 returns,
                                 is_async,
+                                type_bounds,
                                 ..
                             } => (
                                 type_params.clone(),
                                 params.clone(),
                                 returns.clone(),
                                 *is_async,
+                                type_bounds.clone(),
                             ),
                             crate::ast::Def::DCFuncUnsafe { returns, .. } => {
-                                (Vec::new(), Vec::new(), returns.clone(), false)
+                                (Vec::new(), Vec::new(), returns.clone(), false, Vec::new())
                             }
-                            _ => (Vec::new(), Vec::new(), None, false),
+                            _ => (Vec::new(), Vec::new(), None, false, Vec::new()),
                         };
                         v.insert(crate::codegen::FuncSig {
                             type_params,
                             returns,
                             is_async,
+                            type_bounds,
                         });
                     }
                 }
@@ -768,6 +782,31 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
                     });
                 global_safety.entry(qual).or_insert_with(|| safety.clone());
             }
+            // Collect enum definitions for cross-module enum pattern matching.
+            if let crate::ast::Def::DEnum {
+                name,
+                variants,
+                type_params: _,
+                loc: _,
+            } = d
+            {
+                let qual_prefix: String = if module_name == "main" {
+                    "main".to_string()
+                } else if module_name.starts_with("std") {
+                    format!("mvp_{}", module_name)
+                } else {
+                    let local = file
+                        .strip_prefix("src/")
+                        .unwrap_or(file.as_str())
+                        .strip_suffix(".miva")
+                        .unwrap_or(file.as_str())
+                        .replace('/', ".");
+                    format!("{}.{}", pkg_name, local)
+                };
+                let qual = format!("{}.{}", qual_prefix, name);
+                global_enums.entry(qual.clone()).or_insert_with(|| variants.clone());
+                global_enums.entry(name.clone()).or_insert_with(|| variants.clone());
+            }
         }
     }
 
@@ -777,7 +816,6 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
 
     for file in &files {
         eprintln!("{}", color::step("compile", file));
-
         let cache_key = make_cache_key(file, &std_path_str);
         let was_cached = !needs_rebuild_by_hash(file, &cache_dir, &cache_key, backend);
 
@@ -793,6 +831,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
             &all_func_sigs,
             &global_type_sigs,
             &global_safety,
+            &global_enums,
         )?;
 
         if !was_cached {

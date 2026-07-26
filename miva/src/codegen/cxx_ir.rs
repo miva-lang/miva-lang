@@ -519,6 +519,8 @@ fn lower_def(ctx: &mut IrContext, def: &Def) -> IrDef {
         Def::DEnum { name, variants, type_params, .. } => {
             IrDef::Enum { name: name.clone(), type_params: type_params.clone(), variants: variants.clone() }
         }
+        // Shape definitions produce no runtime code
+        Def::DShape { .. } => IrDef::Export("".to_string()),
         Def::DFunc { name, type_params, params, returns, body, is_async, .. } if *is_async => {
             let (body_stmts, body_result) = lower_block(ctx, body);
             IrDef::AsyncFunc {
@@ -1196,10 +1198,12 @@ pub fn emit_stmt(stmt: &IrStmt, depth: usize) -> String {
             format!("{}{} = {};\n", ind, name, emit_expr(expr, depth, None))
         }
         IrStmt::FieldAssign { target, field, expr } => {
+            let target_str = emit_expr(target, depth, None);
             format!(
-                "{}({}).{} = ({});\n",
+                "{}const_cast<std::remove_const_t<std::remove_reference_t<decltype({})>>&>({}).{} = ({});\n",
                 ind,
-                emit_expr(target, depth, None),
+                target_str,
+                target_str,
                 field,
                 emit_expr(expr, depth, None)
             )
@@ -1410,14 +1414,69 @@ fn emit_cfunc(name: &str, params: &[Param], returns: &Option<Typ>, code: &str, i
     format!("{} {} {{\n{}{}}}\n\n", ind, signature, code, ind)
 }
 
+fn collect_generic_params_ir(typ: &Typ, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
+    match typ {
+        Typ::TGenericParam { name } => {
+            if seen.insert(name.clone()) {
+                out.push(name.clone());
+            }
+        }
+        Typ::TStruct { name, fields, type_args } => {
+            if fields.is_empty() && type_args.is_empty() && name.len() == 1 && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                if seen.insert(name.clone()) {
+                    out.push(name.clone());
+                }
+            } else {
+                for a in type_args {
+                    collect_generic_params_ir(a, seen, out);
+                }
+            }
+        }
+        Typ::TPtr { to } => collect_generic_params_ir(to, seen, out),
+        Typ::TBox { of } => collect_generic_params_ir(of, seen, out),
+        Typ::TFuture { of } => collect_generic_params_ir(of, seen, out),
+        Typ::TArray { of } => collect_generic_params_ir(of, seen, out),
+        Typ::TFunc { params, returns } => {
+            for p in params {
+                collect_generic_params_ir(p, seen, out);
+            }
+            collect_generic_params_ir(returns, seen, out);
+        }
+        _ => {}
+    }
+}
+
 fn emit_normal_func(name: &str, type_params: &[String], params: &[Param], returns: &Option<Typ>, body_stmts: &[IrStmt], body_result: &Option<IrExpr>, ind: String, _inner: usize) -> String {
     let param_strs: Vec<_> = params.iter().map(cxx_param).collect();
     let ret_type = returns.as_ref().map_or("mvp_builtin_unit".into(), cxx_type);
+
+    let mut seen = std::collections::HashSet::new();
+    let mut extra_tparams: Vec<String> = Vec::new();
+    for p in params {
+        let typ = match p {
+            Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
+        };
+        collect_generic_params_ir(typ, &mut seen, &mut extra_tparams);
+    }
+    if let Some(r) = returns {
+        collect_generic_params_ir(r, &mut seen, &mut extra_tparams);
+    }
+    let all_tparams: Vec<String> = {
+        let mut combined: Vec<String> = type_params.to_vec();
+        for tp in &extra_tparams {
+            if !combined.contains(tp) {
+                combined.push(tp.clone());
+            }
+        }
+        combined
+    };
+
     let signature = format!("{} {}({})", ret_type, mangle_cpp_kw(name), param_strs.join(", "));
-    let template_header = if type_params.is_empty() {
+    let inline_prefix = if all_tparams.is_empty() { "inline " } else { "" };
+    let template_header = if all_tparams.is_empty() {
         String::new()
     } else {
-        let params_str = type_params
+        let params_str = all_tparams
             .iter()
             .map(|tp| format!("typename {}", tp))
             .collect::<Vec<_>>()
@@ -1427,27 +1486,34 @@ fn emit_normal_func(name: &str, type_params: &[String], params: &[Param], return
     let body_str = if ret_type == "mvp_builtin_unit" {
         let stmt_strs: String = body_stmts.iter().map(|s| emit_stmt(s, 1)).collect();
         let ret_line = match body_result {
-            Some(expr) => format!("  return {};\n", emit_expr(expr, 1, None)),
+            Some(expr) => {
+                format!(
+                    "  {};\n  return mvp_builtin_void;\n",
+                    emit_expr(expr, 1, None)
+                )
+            }
             None => "  return mvp_builtin_void;\n".into(),
         };
         format!(
             "{} {} {{\n{}{}{}}}\n\n",
             ind,
-            signature,
+            format!("{}{}", inline_prefix, signature),
             stmt_strs,
             ret_line,
             ind
         )
     } else {
         let stmt_strs: String = body_stmts.iter().map(|s| emit_stmt(s, 1)).collect();
+        let has_return = body_stmts.iter().any(|s| matches!(s, IrStmt::Return(_)));
         let ret_line = match body_result {
             Some(expr) => format!("  return {};\n", emit_expr(expr, 1, Some(ret_type.as_str()))),
-            None => format!("  return {}();\n", ret_type),
+            None if !has_return => format!("  return {}();\n", ret_type),
+            None => String::new(),
         };
         format!(
             "{} {} {{\n{}{}{}}}\n\n",
             ind,
-            signature,
+            format!("{}{}", inline_prefix, signature),
             stmt_strs,
             ret_line,
             ind
@@ -1657,7 +1723,7 @@ fn generate_header_ir(defs: &[IrDef]) -> String {
     let mut import_paths = Vec::new();
     collect_imports_ir(defs, &mut import_paths);
     for path in &import_paths {
-        let inc = cxx_include_path(path);
+        let inc = cxx_include_here(path);
         if !inc.is_empty() {
             includes.push_str(&inc);
         }
@@ -1713,6 +1779,7 @@ fn ir_def_to_ast(def: &IrDef) -> Def {
                 body: Box::new(Expr::EVoid { loc: Loc { line: 1, col: 1 } }),
                 safety: Safety::Safe,
                 is_async: false,
+                type_bounds: vec![],
             }
         }
         IrDef::AsyncFunc { name, type_params, params, returns, .. } => {
@@ -1725,6 +1792,7 @@ fn ir_def_to_ast(def: &IrDef) -> Def {
                 body: Box::new(Expr::EVoid { loc: Loc { line: 1, col: 1 } }),
                 safety: Safety::Safe,
                 is_async: true,
+                type_bounds: vec![],
             }
         }
         IrDef::CFunc { name, params, returns, .. } => {
@@ -1795,7 +1863,25 @@ fn find_and_emit_func_ir(defs: &[IrDef], name: &str) -> String {
     String::new()
 }
 
+fn collect_exported_names_ir(defs: &[IrDef]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for def in defs.iter() {
+        match def {
+            IrDef::Module { defs: inner_defs, .. } => {
+                names.extend(collect_exported_names_ir(inner_defs));
+            }
+            IrDef::Export(symbol) => {
+                names.insert(symbol.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &[String], result: &mut String) {
+    let exported = collect_exported_names_ir(defs);
+    // First pass: emit struct and enum definitions
     for def in defs.iter() {
         match def {
             IrDef::Module { name, defs: inner_defs } => {
@@ -1819,19 +1905,115 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
                         .iter()
                         .map(|f| format!("  {} {};\n", cxx_type(&f.typ), f.name))
                         .collect();
-                    format!("struct {} {{\n{}}};\n\n", s.name, field_strs)
+                    let template = if s.type_params.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "template<{}>\n",
+                            s.type_params
+                                .iter()
+                                .map(|tp| format!("typename {}", tp))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    };
+                    format!("{}struct {} {{\n{}}};\n\n", template, s.name, field_strs)
                 } else if let Some(e) = sym.lookup_enum(symbol) {
                     emit_enum_def(&e.name, &e.type_params, &e.variants, String::new(), 0)
-                } else if let Some(f) = sym.lookup_function(symbol) {
-                    if f.type_params.is_empty() {
-                        cxx_func_decl(&f.name, &f.params, &f.return_typ)
-                    } else {
-                        find_and_emit_func_ir(defs, symbol)
-                    }
                 } else {
                     String::new()
                 };
                 result.push_str(&decl);
+            }
+            IrDef::Enum { name, type_params, variants } => {
+                if !exported.contains(name.as_str()) {
+                    let decl = emit_enum_def(name, type_params, variants, String::new(), 0);
+                    result.push_str(&decl);
+                }
+            }
+            IrDef::Struct { name, type_params, fields } => {
+                if !exported.contains(name.as_str()) {
+                    let field_strs: String = fields
+                        .iter()
+                        .map(|f| format!("  {} {};\n", cxx_type(&f.typ), f.name))
+                        .collect();
+                    let template = if type_params.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "template<{}>\n",
+                            type_params
+                                .iter()
+                                .map(|tp| format!("typename {}", tp))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    };
+                    result.push_str(&format!(
+                        "{}{}struct {} {{\n{}}};\n\n",
+                        template, "", name, field_strs
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    // Second pass: emit function definitions
+    for def in defs.iter() {
+        match def {
+            IrDef::Func { name, type_params, params, returns, body_stmts, body_result, .. } => {
+                if exported.contains(name.as_str()) {
+                    let decl = find_and_emit_func_ir(defs, name);
+                    result.push_str(&decl);
+                } else {
+                    let has_tparams = !type_params.is_empty() || {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut extra = Vec::new();
+                        for p in params {
+                            let typ = match p {
+                                Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
+                            };
+                            collect_generic_params_ir(typ, &mut seen, &mut extra);
+                        }
+                        if let Some(r) = returns {
+                            collect_generic_params_ir(r, &mut seen, &mut extra);
+                        }
+                        !extra.is_empty()
+                    };
+                    if has_tparams {
+                        let decl = find_and_emit_func_ir(defs, name);
+                        result.push_str(&decl);
+                    } else {
+                        result.push_str(&cxx_func_decl(name, params, returns));
+                    }
+                }
+            }
+            IrDef::AsyncFunc { name, type_params, params, returns, body_stmts, body_result, .. } => {
+                if exported.contains(name.as_str()) {
+                    let decl = find_and_emit_func_ir(defs, name);
+                    result.push_str(&decl);
+                } else {
+                    let has_tparams = !type_params.is_empty() || {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut extra = Vec::new();
+                        for p in params {
+                            let typ = match p {
+                                Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
+                            };
+                            collect_generic_params_ir(typ, &mut seen, &mut extra);
+                        }
+                        if let Some(r) = returns {
+                            collect_generic_params_ir(r, &mut seen, &mut extra);
+                        }
+                        !extra.is_empty()
+                    };
+                    if has_tparams {
+                        let decl = find_and_emit_func_ir(defs, name);
+                        result.push_str(&decl);
+                    } else {
+                        result.push_str(&cxx_func_decl(name, params, returns));
+                    }
+                }
             }
             _ => {}
         }
@@ -1912,6 +2094,7 @@ pub fn build_ir(defs: &[Def]) -> [String; 3] {
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <type_traits>
 #include <mvp_builtin.h>
 
 template<class R, class... A>
