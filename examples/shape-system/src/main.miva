@@ -1,0 +1,92 @@
+module main;
+
+// Define a shape that requires name and age fields
+PersonShape = shape {
+  name: string,
+  age: int,
+}
+
+// Define a shape with a single field
+HasId = shape {
+  id: int,
+}
+
+// Structs that satisfy shapes (exact match)
+Employee = struct {
+  name: string,
+  age: int,
+}
+
+// Structs that satisfy shapes (superset — extra fields OK)
+Customer = struct {
+  name: string,
+  age: int,
+  email: string,
+}
+
+// Struct that does NOT satisfy the shape (missing field)
+IncompletePerson = struct {
+  name: string,
+}
+
+// Generic shape with type parameter
+HasValue[T] = shape {
+  value: T,
+}
+
+// Struct satisfying generic shape
+IntBox = struct {
+  value: int,
+}
+
+StringBox = struct {
+  value: string,
+}
+
+// Generic function with shape bound
+describe_person[T: PersonShape] = (p: T): string => {
+  return p.name + " is " + string_from(p.age);
+}
+
+// Generic function with multiple shape bounds
+get_id_and_name[T: PersonShape + HasId] = (p: T): string => {
+  return p.id + " - " + p.name;
+}
+
+// Generic function with generic shape bound
+get_value[V: HasValue[int]] = (x: V): int => {
+  return x.value;
+}
+
+// Using shape as first-class type annotation
+print_person_info = (p: PersonShape) => {
+  printlns!(p.name, ":", p.age);
+}
+
+main = () => {
+  // Exact match — Employee satisfies PersonShape
+  let emp Employee = struct Employee { name = "Alice", age = 30 };
+  printlns!(describe_person(emp));
+
+  // Superset match — Customer also satisfies PersonShape
+  let cust Customer = struct Customer { name = "Bob", age = 25, email = "bob@example.com" };
+  printlns!(describe_person(cust));
+
+  // Shape as first-class type
+  print_person_info(emp);
+
+  // Generic shape with int value
+  let box1 IntBox = struct IntBox { value = 42 };
+  printlns!("value:", get_value(box1));
+
+  // Multiple bounds
+  let multi PersonWithId = struct PersonWithId { name = "Carol", age = 35, id = 100 };
+  printlns!(get_id_and_name(multi));
+}
+
+// Extra struct for multi-bound test
+PersonWithId = struct {
+  name: string,
+  age: int,
+  id: int,
+}
