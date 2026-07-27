@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::droppable::is_droppable_typ;
+use crate::droppable::{droppable_typ_name, is_droppable_typ};
 use crate::error::Error;
 use crate::symbol_table::SymbolTable;
 
@@ -28,14 +28,6 @@ struct Context {
     caller_safety: Safety,
     global_safety: HashMap<String, Safety>,
     droppable: HashSet<String>,
-}
-
-fn droppable_typ_name(t: &Typ) -> String {
-    match t {
-        Typ::TStruct { name, .. } => name.clone(),
-        Typ::TArray { of } => format!("[{}]", droppable_typ_name(of)),
-        _ => "?".to_string(),
-    }
 }
 
 fn ban_generic_arg(t: &Typ, droppable: &HashSet<String>, loc: &Loc, what: &str, errs: &mut Vec<Error>) {
@@ -154,7 +146,14 @@ fn ban_check_expr(expr: &Expr, droppable: &HashSet<String>, errs: &mut Vec<Error
                 ban_check_expr(v, droppable, errs);
             }
         }
-        Expr::ELambda { body, .. } => ban_check_expr(body, droppable, errs),
+        Expr::ELambda { loc, params, ret, body, .. } => {
+            for p in params {
+                let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
+                ban_droppable_generic_args(typ, droppable, loc, errs);
+            }
+            ban_droppable_generic_args(ret, droppable, loc, errs);
+            ban_check_expr(body, droppable, errs);
+        }
         _ => {}
     }
 }
@@ -3058,5 +3057,40 @@ mod tests {
         ));
         let errs = check_program(&defs);
         assert!(errs.iter().any(|e| e.code == "E0036"), "box<File> must be rejected, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_in_lambda_annotation_is_e0036() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![Stmt::SLet {
+                    loc: loc(),
+                    mutable: false,
+                    name: "f".to_string(),
+                    expr: Box::new(Expr::ELambda {
+                        loc: loc(),
+                        params: vec![Param::POwn {
+                            name: "b".to_string(),
+                            typ: Typ::TBox { of: Box::new(file_typ()) },
+                        }],
+                        ret: Typ::TNull,
+                        captures: vec![],
+                        body: Box::new(Expr::EVoid { loc: loc() }),
+                    }),
+                }],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(
+            errs.iter().any(|e| e.code == "E0036"),
+            "lambda param annotated box<File> must be rejected, got: {:?}",
+            errs
+        );
     }
 }

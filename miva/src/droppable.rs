@@ -13,6 +13,14 @@ pub fn is_droppable_typ(droppable: &HashSet<String>, t: &Typ) -> bool {
     }
 }
 
+pub fn droppable_typ_name(t: &Typ) -> String {
+    match t {
+        Typ::TStruct { name, .. } => name.clone(),
+        Typ::TArray { of } => format!("[{}]", droppable_typ_name(of)),
+        _ => "?".to_string(),
+    }
+}
+
 /// Names of all droppable types: those with a registered op_drop, plus —
 /// because droppability is infectious — any struct containing a droppable
 /// field or enum carrying a droppable payload, at any nesting depth.
