@@ -61,6 +61,8 @@ pub struct MvmCodegen {
 
     // --- Struct field maps ---
     struct_field_indices: HashMap<String, Vec<(String, usize)>>, // struct name -> [(field_name, index)]
+    /// struct/shape name -> typed field defs (for resolving nested field access chains)
+    struct_defs: HashMap<String, Vec<FieldDef>>,
 
     // --- Impl table (operator overloading) ---
     impl_map: HashMap<String, HashMap<String, String>>, // struct_name -> { op_name -> func_name }
@@ -147,6 +149,7 @@ impl MvmCodegen {
             host_defs: Vec::new(),
             void_ref_params: HashMap::new(),
             struct_field_indices: HashMap::new(),
+            struct_defs: HashMap::new(),
             impl_map: HashMap::new(),
             code: Vec::new(),
             last_emitted: None,
@@ -310,6 +313,7 @@ impl MvmCodegen {
                         .map(|(i, f)| (f.name.clone(), i))
                         .collect();
                     self.struct_field_indices.insert(name.clone(), indexed);
+                    self.struct_defs.insert(name.clone(), fields.clone());
                 }
                 Def::DShape { name, fields, .. } => {
                     // Shapes are treated similarly to structs for runtime field access
@@ -318,6 +322,7 @@ impl MvmCodegen {
                         .map(|(i, f)| (f.name.clone(), i))
                         .collect();
                     self.struct_field_indices.insert(name.clone(), indexed);
+                    self.struct_defs.insert(name.clone(), fields.clone());
                 }
                 Def::DEnum { name, variants, .. } => {
                     let indexed: Vec<(String, usize)> = variants.iter()
@@ -1378,36 +1383,32 @@ impl MvmCodegen {
     // --- Helper: find struct field list for an expression ---
 
     fn find_field_list(&self, expr: &Expr) -> Option<&Vec<(String, usize)>> {
-        match expr {
-            Expr::EVar { name, .. } | Expr::EMove { name, .. } => {
-                // Check local variable types first
-                if let Some(typ) = self.var_types.get(name) {
-                    match typ {
-                        Typ::TStruct { name: struct_name, .. } => {
-                            return self.struct_field_indices.get(struct_name);
-                        }
-                        Typ::TShape { name: shape_name } => {
-                            return self.struct_field_indices.get(shape_name);
-                        }
-                        _ => {}
-                    }
-                }
-                // Then check function parameter types
-                if let Some(typ) = self.param_types.get(name) {
-                    match typ {
-                        Typ::TStruct { name: struct_name, .. } => {
-                            return self.struct_field_indices.get(struct_name);
-                        }
-                        Typ::TShape { name: shape_name } => {
-                            return self.struct_field_indices.get(shape_name);
-                        }
-                        _ => {}
-                    }
-                }
-                None
+        let name = self.find_struct_name(expr)?;
+        self.struct_field_indices.get(&name)
+    }
+
+    /// Resolve the struct/shape type name of an expression, following
+    /// nested field-access chains (e.g. `w.h.f`).
+    fn find_struct_name(&self, expr: &Expr) -> Option<String> {
+        fn typ_name(typ: &Typ) -> Option<String> {
+            match typ {
+                Typ::TStruct { name, .. } => Some(name.clone()),
+                Typ::TShape { name } => Some(name.clone()),
+                _ => None,
             }
-            Expr::EStructLit { name, .. } => {
-                self.struct_field_indices.get(name)
+        }
+        match expr {
+            Expr::EVar { name, .. } | Expr::EMove { name, .. } => self
+                .var_types
+                .get(name)
+                .and_then(typ_name)
+                .or_else(|| self.param_types.get(name).and_then(typ_name)),
+            Expr::EStructLit { name, .. } => Some(name.clone()),
+            Expr::EFieldAccess { expr, field, .. } => {
+                let inner = self.find_struct_name(expr)?;
+                let fields = self.struct_defs.get(&inner)?;
+                let fd = fields.iter().find(|f| &f.name == field)?;
+                typ_name(&fd.typ)
             }
             _ => None,
         }
