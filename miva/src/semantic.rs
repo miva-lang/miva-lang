@@ -30,149 +30,154 @@ struct Context {
     droppable: HashSet<String>,
 }
 
-fn ban_generic_arg(t: &Typ, droppable: &HashSet<String>, loc: &Loc, what: &str, errs: &mut Vec<Error>) {
-    if is_droppable_typ(droppable, t) {
-        errs.push(Error::new(
-            "E0036",
-            loc,
-            &format!(
-                "droppable type '{}' cannot be used as a {} argument in v1",
-                droppable_typ_name(t),
-                what
-            ),
-        ));
-    }
-    ban_droppable_generic_args(t, droppable, loc, errs);
+struct BanCtx<'a> {
+    droppable: &'a HashSet<String>,
+    errs: &'a mut Vec<Error>,
 }
 
-fn ban_droppable_generic_args(t: &Typ, droppable: &HashSet<String>, loc: &Loc, errs: &mut Vec<Error>) {
-    match t {
-        Typ::TStruct { type_args, .. } => {
-            for ta in type_args {
-                ban_generic_arg(ta, droppable, loc, "generic", errs);
-            }
+impl<'a> BanCtx<'a> {
+    fn generic_arg(&mut self, t: &Typ, loc: &Loc, what: &str) {
+        if is_droppable_typ(self.droppable, t) {
+            self.errs.push(Error::new(
+                "E0036",
+                loc,
+                &format!(
+                    "droppable type '{}' cannot be used as a {} argument in v1",
+                    droppable_typ_name(t),
+                    what
+                ),
+            ));
         }
-        Typ::TFuture { of } => ban_generic_arg(of, droppable, loc, "future", errs),
-        Typ::TBox { of } => ban_generic_arg(of, droppable, loc, "box", errs),
-        Typ::TArray { of } | Typ::TPtr { to: of } => {
-            ban_droppable_generic_args(of, droppable, loc, errs)
-        }
-        _ => {}
+        self.typ(t, loc);
     }
-}
 
-fn ban_check_expr(expr: &Expr, droppable: &HashSet<String>, errs: &mut Vec<Error>) {
-    match expr {
-        Expr::ECall { loc, type_args, args, .. } => {
-            for ta in type_args {
-                ban_generic_arg(ta, droppable, loc, "generic", errs);
-            }
-            for a in args {
-                ban_check_expr(a, droppable, errs);
-            }
-        }
-        Expr::EMethodCall { loc, type_args, expr, args, .. } => {
-            for ta in type_args {
-                ban_generic_arg(ta, droppable, loc, "generic", errs);
-            }
-            ban_check_expr(expr, droppable, errs);
-            for a in args {
-                ban_check_expr(a, droppable, errs);
-            }
-        }
-        Expr::EStructLit { loc, type_args, fields, .. } => {
-            for ta in type_args {
-                ban_generic_arg(ta, droppable, loc, "generic", errs);
-            }
-            for f in fields {
-                ban_check_expr(&f.value, droppable, errs);
-            }
-        }
-        Expr::ECast { loc, to, expr, .. } => {
-            ban_droppable_generic_args(to, droppable, loc, errs);
-            ban_check_expr(expr, droppable, errs);
-        }
-        Expr::EMacro { args, .. } => {
-            for a in args {
-                ban_check_expr(a, droppable, errs);
-            }
-        }
-        Expr::EBlock { stmts, result, .. } => {
-            for s in stmts {
-                ban_check_stmt(s, droppable, errs);
-            }
-            if let Some(r) = result {
-                ban_check_expr(r, droppable, errs);
-            }
-        }
-        Expr::EIf { cond, then, else_, .. } => {
-            ban_check_expr(cond, droppable, errs);
-            ban_check_expr(then, droppable, errs);
-            if let Some(e) = else_ {
-                ban_check_expr(e, droppable, errs);
-            }
-        }
-        Expr::EChoose { var, cases, otherwise, .. } => {
-            ban_check_expr(var, droppable, errs);
-            for c in cases {
-                ban_check_expr(&c.when, droppable, errs);
-                if let Some(g) = &c.guard {
-                    ban_check_expr(g, droppable, errs);
+    fn typ(&mut self, t: &Typ, loc: &Loc) {
+        match t {
+            Typ::TStruct { type_args, .. } => {
+                for ta in type_args {
+                    self.generic_arg(ta, loc, "generic");
                 }
-                ban_check_expr(&c.then, droppable, errs);
             }
-            if let Some(o) = otherwise {
-                ban_check_expr(o, droppable, errs);
-            }
+            Typ::TFuture { of } => self.generic_arg(of, loc, "future"),
+            Typ::TBox { of } => self.generic_arg(of, loc, "box"),
+            Typ::TArray { of } | Typ::TPtr { to: of } => self.typ(of, loc),
+            _ => {}
         }
-        Expr::EWhile { cond, body, .. } => {
-            ban_check_expr(cond, droppable, errs);
-            ban_check_expr(body, droppable, errs);
-        }
-        Expr::ELoop { body, .. } => ban_check_expr(body, droppable, errs),
-        Expr::EFor { range, body, .. } => {
-            ban_check_expr(range, droppable, errs);
-            ban_check_expr(body, droppable, errs);
-        }
-        Expr::EBinOp { left, right, .. } => {
-            ban_check_expr(left, droppable, errs);
-            ban_check_expr(right, droppable, errs);
-        }
-        Expr::EFieldAccess { expr, .. }
-        | Expr::EAddr { expr, .. }
-        | Expr::EDeref { expr, .. } => ban_check_expr(expr, droppable, errs),
-        Expr::EArrayLit { values, .. } => {
-            for v in values {
-                ban_check_expr(v, droppable, errs);
-            }
-        }
-        Expr::ELambda { loc, params, ret, body, .. } => {
-            for p in params {
-                let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
-                ban_droppable_generic_args(typ, droppable, loc, errs);
-            }
-            ban_droppable_generic_args(ret, droppable, loc, errs);
-            ban_check_expr(body, droppable, errs);
-        }
-        _ => {}
     }
-}
 
-fn ban_check_stmt(stmt: &Stmt, droppable: &HashSet<String>, errs: &mut Vec<Error>) {
-    match stmt {
-        Stmt::SLetTyped { loc, typ, expr, .. } => {
-            ban_droppable_generic_args(typ, droppable, loc, errs);
-            ban_check_expr(expr, droppable, errs);
+    fn expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::ECall { loc, type_args, args, .. } => {
+                for ta in type_args {
+                    self.generic_arg(ta, loc, "generic");
+                }
+                for a in args {
+                    self.expr(a);
+                }
+            }
+            Expr::EMethodCall { loc, type_args, expr, args, .. } => {
+                for ta in type_args {
+                    self.generic_arg(ta, loc, "generic");
+                }
+                self.expr(expr);
+                for a in args {
+                    self.expr(a);
+                }
+            }
+            Expr::EStructLit { loc, type_args, fields, .. } => {
+                for ta in type_args {
+                    self.generic_arg(ta, loc, "generic");
+                }
+                for f in fields {
+                    self.expr(&f.value);
+                }
+            }
+            Expr::ECast { loc, to, expr, .. } => {
+                self.typ(to, loc);
+                self.expr(expr);
+            }
+            Expr::EMacro { args, .. } => {
+                for a in args {
+                    self.expr(a);
+                }
+            }
+            Expr::EBlock { stmts, result, .. } => {
+                for s in stmts {
+                    self.stmt(s);
+                }
+                if let Some(r) = result {
+                    self.expr(r);
+                }
+            }
+            Expr::EIf { cond, then, else_, .. } => {
+                self.expr(cond);
+                self.expr(then);
+                if let Some(e) = else_ {
+                    self.expr(e);
+                }
+            }
+            Expr::EChoose { var, cases, otherwise, .. } => {
+                self.expr(var);
+                for c in cases {
+                    self.expr(&c.when);
+                    if let Some(g) = &c.guard {
+                        self.expr(g);
+                    }
+                    self.expr(&c.then);
+                }
+                if let Some(o) = otherwise {
+                    self.expr(o);
+                }
+            }
+            Expr::EWhile { cond, body, .. } => {
+                self.expr(cond);
+                self.expr(body);
+            }
+            Expr::ELoop { body, .. } => self.expr(body),
+            Expr::EFor { range, body, .. } => {
+                self.expr(range);
+                self.expr(body);
+            }
+            Expr::EBinOp { left, right, .. } => {
+                self.expr(left);
+                self.expr(right);
+            }
+            Expr::EFieldAccess { expr, .. }
+            | Expr::EAddr { expr, .. }
+            | Expr::EDeref { expr, .. } => self.expr(expr),
+            Expr::EArrayLit { values, .. } => {
+                for v in values {
+                    self.expr(v);
+                }
+            }
+            Expr::ELambda { loc, params, ret, body, .. } => {
+                for p in params {
+                    let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
+                    self.typ(typ, loc);
+                }
+                self.typ(ret, loc);
+                self.expr(body);
+            }
+            _ => {}
         }
-        Stmt::SLet { expr, .. } | Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
-            ban_check_expr(expr, droppable, errs)
+    }
+
+    fn stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::SLetTyped { loc, typ, expr, .. } => {
+                self.typ(typ, loc);
+                self.expr(expr);
+            }
+            Stmt::SLet { expr, .. } | Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
+                self.expr(expr)
+            }
+            Stmt::SFieldAssign { target, expr, .. } => {
+                self.expr(target);
+                self.expr(expr);
+            }
+            Stmt::SReturn { expr, .. } => self.expr(expr),
+            _ => {}
         }
-        Stmt::SFieldAssign { target, expr, .. } => {
-            ban_check_expr(target, droppable, errs);
-            ban_check_expr(expr, droppable, errs);
-        }
-        Stmt::SReturn { expr, .. } => ban_check_expr(expr, droppable, errs),
-        _ => {}
     }
 }
 
@@ -851,6 +856,10 @@ pub fn check_program_with(
     // v1 generic-argument ban (E0036): droppable types may not appear as
     // generic arguments (generic structs, future[T], box<T>).
     if !droppable.is_empty() {
+        let mut ban = BanCtx {
+            droppable: &droppable,
+            errs: &mut errs,
+        };
         for def in defs {
             match def {
                 Def::DFunc {
@@ -862,23 +871,23 @@ pub fn check_program_with(
                 } => {
                     for p in params {
                         let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
-                        ban_droppable_generic_args(typ, &droppable, loc, &mut errs);
+                        ban.typ(typ, loc);
                     }
                     if let Some(r) = returns {
-                        ban_droppable_generic_args(r, &droppable, loc, &mut errs);
+                        ban.typ(r, loc);
                     }
-                    ban_check_expr(body, &droppable, &mut errs);
+                    ban.expr(body);
                 }
-                Def::DTest { body, .. } => ban_check_expr(body, &droppable, &mut errs),
+                Def::DTest { body, .. } => ban.expr(body),
                 Def::DStruct { loc, fields, .. } => {
                     for f in fields {
-                        ban_droppable_generic_args(&f.typ, &droppable, loc, &mut errs);
+                        ban.typ(&f.typ, loc);
                     }
                 }
                 Def::DEnum { loc, variants, .. } => {
                     for v in variants {
                         for t in &v.payload {
-                            ban_droppable_generic_args(t, &droppable, loc, &mut errs);
+                            ban.typ(t, loc);
                         }
                     }
                 }

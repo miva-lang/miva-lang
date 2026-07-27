@@ -391,9 +391,9 @@ impl<'a> Ctx<'a> {
                     let droppable = self.infer_droppable(expr, state);
                     let (loc, name) = (loc.clone(), name.clone());
                     out.push(stmt);
-                    if let Some(sn) = droppable {
+                    if let Some(typ) = droppable {
                         let _ = loc;
-                        state.declare(name, sn);
+                        state.declare(name, typ);
                     } else if state.types.contains_key(&name) {
                         state.shadow(name);
                     }
@@ -405,8 +405,8 @@ impl<'a> Ctx<'a> {
                     let droppable = self.droppable_typ(typ);
                     let name = name.clone();
                     out.push(stmt);
-                    if let Some(sn) = droppable {
-                        state.declare(name, sn);
+                    if let Some(typ) = droppable {
+                        state.declare(name, typ);
                     } else if state.types.contains_key(&name) {
                         state.shadow(name);
                     }
@@ -422,8 +422,8 @@ impl<'a> Ctx<'a> {
                     if drops.is_empty() {
                         out.push(stmt);
                     } else if is_exit_simple(expr) {
-                        for (v, sn) in &drops {
-                            out.extend(self.drop_stmts(&loc, v, sn, state));
+                        for (v, typ) in &drops {
+                            out.extend(self.drop_stmts(&loc, v, typ, state));
                         }
                         out.push(stmt);
                     } else {
@@ -443,8 +443,8 @@ impl<'a> Ctx<'a> {
                                 expr: Box::new(ret_expr),
                             });
                         }
-                        for (v, sn) in &drops {
-                            out.extend(self.drop_stmts(&loc, v, sn, state));
+                        for (v, typ) in &drops {
+                            out.extend(self.drop_stmts(&loc, v, typ, state));
                         }
                         out.push(stmt);
                     }
@@ -467,8 +467,8 @@ impl<'a> Ctx<'a> {
                             {
                                 let v = v.clone();
                                 if !state.is_shadowed(&v) {
-                                    if let Some(sn) = state.types.get(&v).cloned() {
-                                        out.extend(self.drop_stmts(loc, &v, &sn, state));
+                                    if let Some(typ) = state.types.get(&v).cloned() {
+                                        out.extend(self.drop_stmts(loc, &v, &typ, state));
                                         state.moved.insert(v);
                                         expanded = true;
                                     }
@@ -505,13 +505,13 @@ impl<'a> Ctx<'a> {
         if !drops.is_empty() {
             match result.as_deref() {
                 None => {
-                    for (v, sn) in &drops {
-                        out.extend(self.drop_stmts(block_loc, v, sn, state));
+                    for (v, typ) in &drops {
+                        out.extend(self.drop_stmts(block_loc, v, typ, state));
                     }
                 }
                 Some(r) if is_exit_simple(r) => {
-                    for (v, sn) in &drops {
-                        out.extend(self.drop_stmts(block_loc, v, sn, state));
+                    for (v, typ) in &drops {
+                        out.extend(self.drop_stmts(block_loc, v, typ, state));
                     }
                 }
                 Some(_) => {
@@ -523,8 +523,8 @@ impl<'a> Ctx<'a> {
                         name: tmp.clone(),
                         expr: Box::new(res_expr),
                     });
-                    for (v, sn) in &drops {
-                        out.extend(self.drop_stmts(block_loc, v, sn, state));
+                    for (v, typ) in &drops {
+                        out.extend(self.drop_stmts(block_loc, v, typ, state));
                     }
                     *result = Some(Box::new(Expr::EVar {
                         loc: block_loc.clone(),
