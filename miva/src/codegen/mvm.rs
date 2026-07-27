@@ -987,6 +987,10 @@ impl MvmCodegen {
                 self.emit_jmp(loop_label);
             }
             Expr::EFor { var, range, body, .. } => {
+                if !matches!(range.as_ref(), Expr::ECall { name, .. } if name == "range") {
+                    self.compile_for_over_array(var, range, body);
+                    return;
+                }
                 // Transform for-loop into a counter-based while loop.
                 // We compile the range expression, then create a loop that:
                 //  - initializes a counter to 0
@@ -1215,6 +1219,66 @@ impl MvmCodegen {
                 self.emit_u32(thunk_idx as u32);
             }
         }
+    }
+
+    /// `for (x in arr) { ... }` over an array value: index-based loop using
+    /// ArrayLen/ArrayGet, loading each element into the loop variable.
+    fn compile_for_over_array(&mut self, var: &str, range: &Expr, body: &Expr) {
+        let check_label = self.new_label();
+        let end_label = self.new_label();
+
+        let arr_idx = self.declare_local("__for_arr__");
+        let counter_idx = self.declare_local("__for_counter__");
+        let end_idx = self.declare_local("__for_end__");
+
+        self.compile_expr(range);
+        self.emit_op(MvmOp::Dup);
+        self.emit_op(MvmOp::StoreLocal);
+        self.emit_u32(arr_idx);
+        self.emit_op(MvmOp::ArrayLen);
+        self.emit_op(MvmOp::StoreLocal);
+        self.emit_u32(end_idx);
+
+        self.emit_op(MvmOp::PushI64);
+        self.emit_i64(0);
+        self.emit_op(MvmOp::StoreLocal);
+        self.emit_u32(counter_idx);
+
+        self.define_label(check_label);
+        self.emit_op(MvmOp::LoadLocal);
+        self.emit_u32(counter_idx);
+        self.emit_op(MvmOp::LoadLocal);
+        self.emit_u32(end_idx);
+        self.emit_op(MvmOp::CmpLt);
+        self.emit_jmp_if_false(end_label);
+
+        let var_idx = if let Some(idx) = self.resolve_local(var) {
+            idx
+        } else {
+            self.declare_local(var)
+        };
+        self.emit_op(MvmOp::LoadLocal);
+        self.emit_u32(arr_idx);
+        self.emit_op(MvmOp::LoadLocal);
+        self.emit_u32(counter_idx);
+        self.emit_op(MvmOp::ArrayGet);
+        self.emit_op(MvmOp::StoreLocal);
+        self.emit_u32(var_idx);
+
+        self.compile_expr(body);
+        self.emit_op(MvmOp::Drop);
+
+        self.emit_op(MvmOp::LoadLocal);
+        self.emit_u32(counter_idx);
+        self.emit_op(MvmOp::PushI64);
+        self.emit_i64(1);
+        self.emit_op(MvmOp::I64Add);
+        self.emit_op(MvmOp::StoreLocal);
+        self.emit_u32(counter_idx);
+
+        self.emit_jmp(check_label);
+        self.define_label(end_label);
+        self.emit_op(MvmOp::PushUnit);
     }
 
     // --- Statement compilation ---
