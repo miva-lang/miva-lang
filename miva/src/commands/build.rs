@@ -308,6 +308,7 @@ fn compile_file_to_src(
     }
 
     typecheck::annotate_lambda_captures(&mut defs);
+    crate::drop_desugar::desugar_drops(&mut defs);
 
     let magical_flags = magical::get_magical_flags(&defs);
     let warnings = warning::get_warnings(&defs);
@@ -898,6 +899,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
 
             // Annotate lambda captures so the MVM backend can lower closures.
             typecheck::annotate_lambda_captures(&mut all_defs);
+            crate::drop_desugar::desugar_drops(&mut all_defs);
 
             // Generate combined MVM bytecode
             let output = codegen::build_ir_with_backend(&all_defs, backend, &all_func_sigs);
@@ -978,6 +980,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
             all_defs.extend(defs);
         }
         typecheck::annotate_lambda_captures(&mut all_defs);
+        crate::drop_desugar::desugar_drops(&mut all_defs);
         let output = codegen::build_ir_with_backend(&all_defs, backend, &all_func_sigs);
         if !output.host_defs.is_empty() {
             let libhost_c = build_dir.join("libhost.c");

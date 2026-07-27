@@ -2,6 +2,7 @@ mod ast;
 mod codegen;
 mod commands;
 mod config;
+mod drop_desugar;
 mod error;
 mod json_ast;
 mod macro_expand;

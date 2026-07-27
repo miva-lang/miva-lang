@@ -1,0 +1,44 @@
+module main;
+
+File = struct {
+  id: int,
+}
+
+file_close = (ref self: File) => {
+  printlns!("close file");
+  printlns!(self.id);
+}
+
+impl File {
+  op_drop file_close,
+}
+
+consume = (f: File) => {
+  printlns!("consumed");
+}
+
+make_file = (id: int): File => {
+  let f File = struct File { id = id };
+  return move f;
+}
+
+async task = (id: int): future[int] => {
+  let t File = struct File { id = id };
+  printlns!("task body");
+  return id * 10;
+}
+
+main = () => {
+  printlns!("start");
+  let a File = struct File { id = 1 };
+  let b File = struct File { id = 2 };
+  if (true) {
+    let inner File = struct File { id = 3 };
+    printlns!("inner end");
+  };
+  let d File = make_file(4);
+  consume(move d);
+  let r int = await(task(5));
+  printlns!(r);
+  printlns!("end");
+}
