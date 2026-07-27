@@ -140,6 +140,7 @@ pub struct SymbolTable {
     struct_index: HashMap<String, usize>,
     enum_index: HashMap<String, usize>,
     shape_index: HashMap<String, usize>,
+    drop_impls: HashMap<String, String>,
 }
 
 impl SymbolTable {
@@ -158,6 +159,7 @@ impl SymbolTable {
             struct_index: HashMap::new(),
             enum_index: HashMap::new(),
             shape_index: HashMap::new(),
+            drop_impls: HashMap::new(),
         }
     }
 
@@ -247,11 +249,22 @@ impl SymbolTable {
                 Def::SImportAs { path, .. } | Def::SImportHere { path, .. } => {
                     table.files.push(path.clone());
                 }
+                Def::DImpl {
+                    struct_name, impls, ..
+                } => {
+                    for imp in impls {
+                        if matches!(imp.op, ImplOp::ImDrop) {
+                            table
+                                .drop_impls
+                                .entry(struct_name.clone())
+                                .or_insert_with(|| imp.func.clone());
+                        }
+                    }
+                }
                 Def::DTest { .. }
                 | Def::DMacro { .. }
                 | Def::DCMagical { .. }
                 | Def::DCIntro { .. }
-                | Def::DImpl { .. }
                 | Def::DShape { .. } => {}
             }
         }
@@ -406,6 +419,10 @@ impl SymbolTable {
 
     pub fn lookup_struct(&self, name: &str) -> Option<&StructEntry> {
         self.struct_index.get(name).map(|&idx| &self.structs[idx])
+    }
+
+    pub fn lookup_drop_fn(&self, struct_name: &str) -> Option<&str> {
+        self.drop_impls.get(struct_name).map(|s| s.as_str())
     }
 
     pub fn lookup_shape(&self, name: &str) -> Option<&ShapeEntry> {
@@ -985,5 +1002,26 @@ mod tests {
         assert_eq!(st.files.len(), 2);
         assert_eq!(st.imports.len(), 1);
         assert_eq!(st.imports[0], "x/y");
+    }
+
+    #[test]
+    fn test_op_drop_registration_lookup() {
+        let defs = vec![
+            make_module("test_mod"),
+            make_struct("File"),
+            make_func("file_close", Safety::Safe),
+            Def::DImpl {
+                loc: loc(),
+                struct_name: "File".to_string(),
+                impls: vec![ImplExpr {
+                    op: ImplOp::ImDrop,
+                    func: "file_close".to_string(),
+                    loc: loc(),
+                }],
+            },
+        ];
+        let st = SymbolTable::build(&defs);
+        assert_eq!(st.lookup_drop_fn("File"), Some("file_close"));
+        assert_eq!(st.lookup_drop_fn("Other"), None);
     }
 }

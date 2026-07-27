@@ -86,6 +86,7 @@ pub enum Token<'input> {
     OpDiv,
     OpEq,
     OpNeq,
+    OpDrop,
     Module,
     Export,
     Import,
@@ -645,6 +646,7 @@ impl<'input> Iterator for Lexer<'input> {
                         "op_div" => Token::OpDiv,
                         "op_eq" => Token::OpEq,
                         "op_neq" => Token::OpNeq,
+                        "op_drop" => Token::OpDrop,
                         "module" => Token::Module,
                         "export" => Token::Export,
                         "import" => Token::Import,
@@ -968,6 +970,14 @@ mod tests {
         assert_eq!(toks[6], Token::OpSub);
         assert_eq!(toks[7], Token::Ident("my_sub"));
         assert_eq!(toks[8], Token::RBrace);
+    }
+
+    #[test]
+    fn test_op_drop_keyword() {
+        let input = "impl File { op_drop file_close }";
+        let toks: Vec<Token> = collect(input).into_iter().map(|(_, t, _)| t).collect();
+        assert_eq!(toks[3], Token::OpDrop);
+        assert_eq!(toks[4], Token::Ident("file_close"));
     }
 
     #[test]

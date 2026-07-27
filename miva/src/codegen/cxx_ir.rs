@@ -1600,9 +1600,13 @@ fn emit_impl(struct_name: &str, impls: &[ImplExpr], ind: String) -> String {
     for impl_expr in impls {
         let op = &impl_expr.op;
         let fn_name = &impl_expr.func;
+        if matches!(op, ImplOp::ImDrop) {
+            continue;
+        }
         let ret_typ = match op {
             ImplOp::ImAdd | ImplOp::ImSub | ImplOp::ImMul | ImplOp::ImDiv => struct_name.to_string(),
             ImplOp::ImEq | ImplOp::ImNeq => "mvp_builtin_boolean".to_string(),
+            ImplOp::ImDrop => unreachable!(),
         };
         let operator = match op {
             ImplOp::ImAdd => "+",
@@ -1611,6 +1615,7 @@ fn emit_impl(struct_name: &str, impls: &[ImplExpr], ind: String) -> String {
             ImplOp::ImDiv => "/",
             ImplOp::ImEq => "==",
             ImplOp::ImNeq => "!=",
+            ImplOp::ImDrop => unreachable!(),
         };
         ret.push_str(&format!(
             "{} {} operator{}(const {}& ____a, const {}& ____b) {{ return {}(____a, ____b); }}\n\n",

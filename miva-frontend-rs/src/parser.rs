@@ -616,15 +616,17 @@ impl<'input> Parser<'input> {
         while self.peek_token()? != Some(&Token::RBrace) {
             let impl_start = match self.peek_token()? {
                 Some(&Token::OpAdd) | Some(&Token::OpSub) | Some(&Token::OpMul)
-                | Some(&Token::OpEq) | Some(&Token::OpNeq) => {
-                    let s = self.advance()?.0;
-                    let op = match self.lexer_last_token()? {
+                | Some(&Token::OpDiv) | Some(&Token::OpEq) | Some(&Token::OpNeq)
+                | Some(&Token::OpDrop) => {
+                    let (s, tok, _) = self.advance()?;
+                    let op = match tok {
                         Token::OpAdd => ImplOp::ImAdd,
                         Token::OpSub => ImplOp::ImSub,
                         Token::OpMul => ImplOp::ImMul,
                         Token::OpDiv => ImplOp::ImDiv,
                         Token::OpEq => ImplOp::ImEq,
                         Token::OpNeq => ImplOp::ImNeq,
+                        Token::OpDrop => ImplOp::ImDrop,
                         _ => unreachable!(),
                     };
                     let (func, _) = self.expect_ident()?;
@@ -710,11 +712,6 @@ impl<'input> Parser<'input> {
             }),
             _ => Err("Expected magical directive".to_string()),
         }
-    }
-
-    fn lexer_last_token(&self) -> Result<Token<'input>, String> {
-        // This is a helper to get the last consumed token — we track it differently
-        Err("not implemented directly".to_string())
     }
 
     // ── Function Parameters ──────────────────────────────────────────
@@ -2115,6 +2112,24 @@ mod tests {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer, input, "test.mv");
         parser.parse_program().unwrap().remove(0)
+    }
+
+    #[test]
+    fn test_parse_impl_op_drop_and_op_div() {
+        let def = parse_first("impl File { op_drop file_close, op_div my_div }");
+        match def {
+            Def::DImpl {
+                struct_name, impls, ..
+            } => {
+                assert_eq!(struct_name, "File");
+                assert_eq!(impls.len(), 2);
+                assert_eq!(impls[0].op, ImplOp::ImDrop);
+                assert_eq!(impls[0].func, "file_close");
+                assert_eq!(impls[1].op, ImplOp::ImDiv);
+                assert_eq!(impls[1].func, "my_div");
+            }
+            _ => panic!("expected DImpl"),
+        }
     }
 
     #[test]

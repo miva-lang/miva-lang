@@ -336,6 +336,7 @@ impl MvmCodegen {
                             ImplOp::ImDiv => "div",
                             ImplOp::ImEq => "eq",
                             ImplOp::ImNeq => "neq",
+                            ImplOp::ImDrop => continue,
                         };
                         ops.insert(op_name.to_string(), impl_expr.func.clone());
                     }

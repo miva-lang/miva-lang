@@ -2205,6 +2205,59 @@ pub fn check_program_with(
     });
     let mut errs = vec![];
 
+    let mut drop_registry: HashMap<String, String> = HashMap::new();
+    for def in defs {
+        if let Def::DImpl {
+            struct_name, impls, ..
+        } = def
+        {
+            for imp in impls {
+                if !matches!(imp.op, ImplOp::ImDrop) {
+                    continue;
+                }
+                if let Some(prev) = drop_registry.get(struct_name) {
+                    errs.push(Error::new(
+                        "E0032",
+                        &imp.loc,
+                        &format!(
+                            "duplicate op_drop registration for struct '{}': already registered to '{}'",
+                            struct_name, prev
+                        ),
+                    ));
+                    continue;
+                }
+                match func_sigs.get(&imp.func) {
+                    None => {
+                        errs.push(Error::new(
+                            "E0031",
+                            &imp.loc,
+                            &format!("op_drop function '{}' is not defined", imp.func),
+                        ));
+                    }
+                    Some((_, params, returns)) => {
+                        let param_ok = params.len() == 1
+                            && matches!(
+                                &params[0],
+                                Param::PRef { typ: Typ::TStruct { name, .. }, .. } if name == struct_name
+                            );
+                        let return_ok = matches!(returns, None | Some(Typ::TNull));
+                        if !param_ok || !return_ok {
+                            errs.push(Error::new(
+                                "E0031",
+                                &imp.loc,
+                                &format!(
+                                    "op_drop function '{}' must have signature (ref self: {}) with no return value",
+                                    imp.func, struct_name
+                                ),
+                            ));
+                        }
+                    }
+                }
+                drop_registry.insert(struct_name.clone(), imp.func.clone());
+            }
+        }
+    }
+
     for def in defs {
         match def {
             Def::DFunc {
@@ -4397,5 +4450,128 @@ mod tests {
         ];
         let errs = check_program(&defs);
         assert!(errs.is_empty(), "valid call should have no errors, got: {:?}", errs);
+    }
+
+    fn file_struct_typ() -> Typ {
+        Typ::TStruct {
+            name: "File".to_string(),
+            fields: vec![],
+            type_args: vec![],
+        }
+    }
+
+    fn make_drop_impl(struct_name: &str, func: &str) -> Def {
+        Def::DImpl {
+            loc: loc(),
+            struct_name: struct_name.to_string(),
+            impls: vec![ImplExpr {
+                op: ImplOp::ImDrop,
+                func: func.to_string(),
+                loc: loc(),
+            }],
+        }
+    }
+
+    fn make_file_close(name: &str, params: Vec<Param>, returns: Option<Typ>) -> Def {
+        make_func(name, params, returns, Expr::EVoid { loc: loc() }, Safety::Safe)
+    }
+
+    #[test]
+    fn test_op_drop_valid_registration() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_file_close(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+                None,
+            ),
+            make_drop_impl("File", "file_close"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.is_empty(), "valid op_drop should have no errors, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_op_drop_rejects_own_param() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_file_close(
+                "file_close",
+                vec![Param::POwn { name: "self".to_string(), typ: file_struct_typ() }],
+                None,
+            ),
+            make_drop_impl("File", "file_close"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0031"), "own param should be E0031, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_op_drop_rejects_wrong_param_type() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_file_close(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: Typ::TInt }],
+                None,
+            ),
+            make_drop_impl("File", "file_close"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0031"), "wrong param type should be E0031, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_op_drop_rejects_return_value() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_func(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+                Some(Typ::TInt),
+                Expr::EInt { loc: loc(), value: 0 },
+                Safety::Safe,
+            ),
+            make_drop_impl("File", "file_close"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0031"), "return value should be E0031, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_op_drop_rejects_unknown_function() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_drop_impl("File", "no_such_fn"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0031"), "unknown function should be E0031, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_op_drop_rejects_duplicate_registration() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_file_close(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+                None,
+            ),
+            make_file_close(
+                "file_close2",
+                vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+                None,
+            ),
+            make_drop_impl("File", "file_close"),
+            make_drop_impl("File", "file_close2"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0032"), "duplicate op_drop should be E0032, got: {:?}", errs);
     }
 }

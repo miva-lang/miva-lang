@@ -202,6 +202,8 @@ pub enum ImplOp {
     ImEq,
     #[serde(rename = "op_neq")]
     ImNeq,
+    #[serde(rename = "op_drop")]
+    ImDrop,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
