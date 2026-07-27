@@ -469,10 +469,14 @@ impl MvmCodegen {
             }
         }
 
-        // Fill in name indices (now that all strings are collected)
-        let func_names: Vec<(String, usize)> = cg.func_indices.iter()
+        // Fill in name indices (now that all strings are collected).
+        // A function may be registered under both its qualified and bare name;
+        // write qualified names first so the bare name wins deterministically
+        // (the VM resolves the entry point by looking up the bare "main").
+        let mut func_names: Vec<(String, usize)> = cg.func_indices.iter()
             .map(|(name, &idx)| (name.clone(), idx))
             .collect();
+        func_names.sort_by_key(|(name, _)| (!name.contains('.'), name.clone()));
         for (func_name, idx) in &func_names {
             let name_idx = cg.resolve_string(func_name);
             cg.functions[*idx].name_idx = name_idx;
