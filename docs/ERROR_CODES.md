@@ -22,6 +22,14 @@
 | **E0022** | `typecheck.rs` | Assignment type mismatch (variable type != assigned expression type) |
 | **E0024** | `typecheck.rs` | Array literal — not all elements have the same type |
 | **E0026** | `typecheck.rs` | For loop — range expression must be an array |
+| **E0028** | `typecheck.rs` | Shape not satisfied — type is missing a field required by the shape |
+| **E0030** | `typecheck.rs` | Shape bound not satisfied — field exists but has the wrong type |
+| **E0031** | `typecheck.rs` | op_drop function not defined, or signature is not `(ref self: T)` with no return value |
+| **E0032** | `typecheck.rs` | Duplicate op_drop registration for the same struct |
+| **E0033** | `semantic.rs` | Droppable value moved in only one branch of an if/else |
+| **E0034** | `typecheck.rs` | Registered drop function is sealed — cannot be called directly or used as a value; use `drop(x)` |
+| **E0035** | `semantic.rs` | `drop()` takes exactly one droppable variable |
+| **E0036** | `semantic.rs` | Droppable type used as a generic/future/box argument (banned in v1) |
 
 ## Warning Codes (W-series)
 
@@ -52,10 +60,18 @@ E0021  invalid cast
 E0022  assignment type mismatch
 E0024  array element type mismatch
 E0026  for range not array
+E0028  shape not satisfied (missing field)
+E0030  shape bound not satisfied (field type mismatch)
+E0031  op_drop fn missing or bad signature
+E0032  duplicate op_drop registration
+E0033  droppable moved in only one branch
+E0034  sealed drop fn called/used directly
+E0035  drop() arg not a droppable variable
+E0036  droppable as generic/future/box arg (v1)
 
 W0001  naming convention
 W0002  deprecated function call
 W0003  invalid intro comment / annotation mismatch
 ```
 
-Total: **18 error codes** + **3 warning codes**.
+Total: **26 error codes** + **3 warning codes**.

@@ -1899,6 +1899,72 @@ This generates C++ `operator+`, `operator-`, `operator*`, `operator/`, `operator
 
 ---
 
+## Drop System (Destructors)
+
+A struct can register a destructor with the same `impl` syntax as operator overloading. The registered function runs automatically when a value of that type goes out of scope.
+
+```miva
+File = struct {
+  id: int,
+}
+
+file_close = (ref self: File) => {
+  printlns!("closing file");
+  printlns!(self.id);
+}
+
+impl File {
+  op_drop file_close,
+}
+```
+
+### Signature and registration
+
+- The drop function must have the exact signature `(ref self: T)` with no return value (E0031).
+- Each struct may register at most one `op_drop` (E0032).
+- A registered drop function is **sealed**: it cannot be called directly or used as a value (E0034). Use `drop(x)` instead.
+
+### Destruction order
+
+Destruction is deterministic and scope-based (Rust-style):
+
+- At scope exit, live droppable values are destroyed in **reverse declaration order**.
+- For each value, its own `op_drop` runs first, then its droppable contents recursively:
+  struct fields in declaration order, an enum's live variant payload, array elements in index order.
+
+Droppability is infectious: a struct, enum, or array that contains a droppable type is itself droppable and receives recursive drop glue, even without its own `op_drop`.
+
+### Move-only semantics
+
+Droppable types are move-only:
+
+- Passing or returning one requires an explicit `move`; implicit copies are rejected.
+- A value that has been moved away is not dropped at scope exit.
+- Moving a droppable value in only one branch of an `if`/`else` is an error (E0033) — move it in both branches or neither. `drop(x)` in one branch balances a `move` in the other.
+
+### Early destruction: drop(x)
+
+The builtin `drop(x)` destroys a droppable variable immediately and consumes it:
+
+```miva
+early = () => {
+  let f File = struct File { id = 1 };
+  drop(f);              // file_close runs here
+  // f is moved-out from this point on
+}
+```
+
+`drop()` takes exactly one droppable variable (E0035).
+
+### v1 limitations
+
+- Droppable types cannot be used as generic, `future`, or `box` arguments (E0036) — e.g. `Vec[File]`, `future[File]`, and `box` of a droppable are rejected. Plain arrays (`[File]`) are allowed.
+- Drop glue runs in async function bodies as well; the ban only applies to droppables crossing the `future[T]` boundary.
+
+See `examples/drop-system` for a full program covering all scenarios on all three backends.
+
+---
+
 ## Compiler Pipeline & Commands
 
 ### Pipeline
@@ -1995,6 +2061,9 @@ build/debug/cache/
 | E0010 | Cannot dereference pointer in safe function |
 | E0011 | Choose expression must have an otherwise branch |
 | E0013 | Invalid magical comment |
+| E0033 | Droppable value moved in only one branch of an if/else |
+| E0035 | drop() takes exactly one droppable variable |
+| E0036 | Droppable type used as a generic/future/box argument (v1) |
 
 ### Type Errors
 
@@ -2010,6 +2079,11 @@ build/debug/cache/
 | E0022 | Type mismatch in let declaration or assignment |
 | E0024 | All array elements must have the same type |
 | E0026 | For-each loop range must be an array |
+| E0028 | Shape not satisfied — type is missing a required field |
+| E0030 | Shape bound not satisfied — field has the wrong type |
+| E0031 | op_drop function not defined or signature is not `(ref self: T)` with no return |
+| E0032 | Duplicate op_drop registration for the same struct |
+| E0034 | Sealed drop function called directly or used as a value |
 
 ---
 
