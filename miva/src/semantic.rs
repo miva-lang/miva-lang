@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::error::Error;
@@ -26,6 +26,38 @@ struct Context {
     vars: HashMap<String, VarInfo>,
     caller_safety: Safety,
     global_safety: HashMap<String, Safety>,
+    droppable: HashSet<String>,
+}
+
+fn is_droppable_typ(droppable: &HashSet<String>, t: &Typ) -> bool {
+    matches!(t, Typ::TStruct { name, .. } if droppable.contains(name))
+}
+
+fn is_droppable_var(ctx: &Context, name: &str) -> bool {
+    ctx.vars
+        .get(name)
+        .map_or(false, |i| is_droppable_typ(&ctx.droppable, &i.typ))
+}
+
+/// Droppable values are move-only: using one by value (assignment, own-param
+/// passing, return, aggregate construction) transfers ownership implicitly.
+fn consume_droppable(ctx: &mut Context, expr: &Expr) {
+    if let Expr::EVar { name, .. } = expr {
+        if is_droppable_var(ctx, name) {
+            if let Some(info) = ctx.vars.get(name) {
+                if info.is_ref_param {
+                    return;
+                }
+                ctx.vars.insert(
+                    name.clone(),
+                    VarInfo {
+                        state: VarState::Moved,
+                        ..info.clone()
+                    },
+                );
+            }
+        }
+    }
 }
 
 fn is_copy_type(types: &HashMap<String, Vec<FieldDef>>, t: &Typ) -> bool {
@@ -188,18 +220,27 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                     }
                 }
             }
-            for arg in args {
+            for (i, arg) in args.iter().enumerate() {
                 errs.extend(check_expr(ctx, symbol_table, arg));
+                let is_ref_arg = symbol_table
+                    .lookup_function(name)
+                    .and_then(|f| f.params.get(i))
+                    .map_or(false, |p| matches!(p, Param::PRef { .. }));
+                if !is_ref_arg {
+                    consume_droppable(ctx, arg);
+                }
             }
         }
         Expr::EStructLit { loc, fields, .. } => {
             for vf in fields {
                 errs.extend(check_expr(ctx, symbol_table, &vf.value));
+                consume_droppable(ctx, &vf.value);
             }
         }
         Expr::EArrayLit { loc, values } => {
             for elem in values {
                 errs.extend(check_expr(ctx, symbol_table, elem));
+                consume_droppable(ctx, elem);
             }
         }
         Expr::EFieldAccess { loc, expr, field } => {
@@ -229,6 +270,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
             errs.extend(check_expr(ctx, symbol_table, cond));
 
             let vars_before = ctx.vars.clone();
+            let vars_before_snapshot = vars_before.clone();
 
             errs.extend(check_expr(ctx, symbol_table, then));
             let vars_after_then = ctx.vars.clone();
@@ -244,6 +286,26 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
 
             let merged_vars = merge_var_maps(&vars_after_then, &vars_after_else);
             ctx.vars = merged_vars;
+
+            for (name, info) in vars_before_snapshot.iter() {
+                if info.state == VarState::Valid
+                    && is_droppable_typ(&ctx.droppable, &info.typ)
+                    && !info.is_ref_param
+                {
+                    let then_state = vars_after_then.get(name).map(|i| i.state.clone());
+                    let else_state = vars_after_else.get(name).map(|i| i.state.clone());
+                    if then_state != else_state {
+                        errs.push(Error::new(
+                            "E0033",
+                            loc,
+                            &format!(
+                                "droppable value '{}' is moved in only one branch; move it in both branches or neither",
+                                name
+                            ),
+                        ));
+                    }
+                }
+            }
         }
         Expr::EChoose {
             loc,
@@ -336,6 +398,28 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                 .chain(Some(otherwise_vars))
                 .collect();
 
+            for (name, info) in vars_before.iter() {
+                if info.state == VarState::Valid
+                    && is_droppable_typ(&ctx.droppable, &info.typ)
+                    && !info.is_ref_param
+                {
+                    let states: Vec<_> = all_branch_vars
+                        .iter()
+                        .map(|m| m.get(name).map(|i| i.state.clone()))
+                        .collect();
+                    if states.windows(2).any(|w| w[0] != w[1]) {
+                        errs.push(Error::new(
+                            "E0033",
+                            loc,
+                            &format!(
+                                "droppable value '{}' is moved in only some branches; move it in all branches or none",
+                                name
+                            ),
+                        ));
+                    }
+                }
+            }
+
             let merged_vars = all_branch_vars
                 .into_iter()
                 .fold(vars_before.clone(), |acc, branch_vars| {
@@ -360,10 +444,30 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                         expr,
                     } => {
                         errs.extend(check_expr(ctx, symbol_table, expr));
+                        consume_droppable(ctx, expr);
+                        let inferred = match expr.as_ref() {
+                            Expr::EStructLit { name: sn, .. } => Typ::TStruct {
+                                name: sn.clone(),
+                                fields: vec![],
+                                type_args: vec![],
+                            },
+                            Expr::EVar { name: v, .. }
+                            | Expr::EMove { name: v, .. }
+                            | Expr::EClone { name: v, .. } => ctx
+                                .vars
+                                .get(v)
+                                .map(|i| i.typ.clone())
+                                .unwrap_or(Typ::TInt),
+                            Expr::ECall { name: f, .. } => symbol_table
+                                .lookup_function(f)
+                                .and_then(|e| e.return_typ.clone())
+                                .unwrap_or(Typ::TInt),
+                            _ => Typ::TInt,
+                        };
                         ctx.vars.insert(
                             name.clone(),
                             VarInfo {
-                                typ: Typ::TInt,
+                                typ: inferred,
                                 state: VarState::Valid,
                                 is_mutable: *mutable,
                                 is_ref_param: false,
@@ -377,6 +481,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                         expr,
                     } => {
                         errs.extend(check_expr(ctx, symbol_table, expr));
+                        consume_droppable(ctx, expr);
                         ctx.vars.insert(
                             name.clone(),
                             VarInfo {
@@ -407,6 +512,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                                 ));
                             }
                             errs.extend(check_expr(ctx, symbol_table, expr));
+                            consume_droppable(ctx, expr);
                             ctx.vars.insert(
                                 name.clone(),
                                 VarInfo {
@@ -418,6 +524,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                     }
                     Stmt::SReturn { loc, expr } => {
                         errs.extend(check_expr(ctx, symbol_table, expr));
+                        consume_droppable(ctx, expr);
                     }
                     Stmt::SFieldAssign { loc, target, expr, .. } => {
                         errs.extend(check_expr(ctx, symbol_table, target));
@@ -432,6 +539,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
 
             if let Some(e) = result {
                 errs.extend(check_expr(ctx, symbol_table, e));
+                consume_droppable(ctx, e);
             }
 
             let propagated_vars = merge_saved_with_current(&saved_vars, &ctx.vars);
@@ -573,6 +681,18 @@ pub fn check_program_with(
         })
         .collect();
 
+    let droppable: HashSet<String> = defs
+        .iter()
+        .filter_map(|d| match d {
+            Def::DImpl {
+                struct_name, impls, ..
+            } if impls.iter().any(|i| matches!(i.op, ImplOp::ImDrop)) => {
+                Some(struct_name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+
     for def in defs {
         match def {
             Def::DModule { loc, name } => {
@@ -641,6 +761,7 @@ pub fn check_program_with(
                     vars,
                     caller_safety: safety.clone(),
                     global_safety: global_safety.clone(),
+                    droppable: droppable.clone(),
                 };
                 errs.extend(check_expr(&mut ctx, &symbol_table, body));
             }
@@ -656,6 +777,7 @@ pub fn check_program_with(
                     vars: HashMap::new(),
                     caller_safety: Safety::Safe,
                     global_safety: global_safety.clone(),
+                    droppable: droppable.clone(),
                 };
                 errs.extend(check_expr(&mut ctx, &symbol_table, body));
             }
@@ -1968,5 +2090,304 @@ mod tests {
         ];
         let errs = check_program(&defs);
         assert!(errs.is_empty(), "valid field access should have no errors, got: {:?}", errs);
+    }
+
+    // ── droppable move-only enforcement ─────────────────────────────
+
+    fn file_typ() -> Typ {
+        Typ::TStruct {
+            name: "File".to_string(),
+            fields: vec![],
+            type_args: vec![],
+        }
+    }
+
+    fn file_lit() -> Expr {
+        Expr::EStructLit {
+            loc: loc(),
+            name: "File".to_string(),
+            fields: vec![],
+            type_args: vec![],
+        }
+    }
+
+    fn drop_defs() -> Vec<Def> {
+        vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "id".to_string(), typ: Typ::TInt }]),
+            Def::DImpl {
+                loc: loc(),
+                struct_name: "File".to_string(),
+                impls: vec![ImplExpr {
+                    op: ImplOp::ImDrop,
+                    func: "file_close".to_string(),
+                    loc: loc(),
+                }],
+            },
+            make_func(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: file_typ() }],
+                Expr::EVoid { loc: loc() },
+                Safety::Safe,
+            ),
+        ]
+    }
+
+    fn let_file(name: &str) -> Stmt {
+        Stmt::SLetTyped {
+            loc: loc(),
+            name: name.to_string(),
+            typ: file_typ(),
+            expr: Box::new(file_lit()),
+        }
+    }
+
+    fn use_var(name: &str) -> Stmt {
+        Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(Expr::EVar {
+                loc: loc(),
+                name: name.to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_droppable_second_use_after_implicit_move_errors() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "b".to_string(),
+                        typ: file_typ(),
+                        expr: Box::new(Expr::EVar { loc: loc(), name: "a".to_string() }),
+                    },
+                    use_var("a"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "expected E0001, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_clone_allowed() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "b".to_string(),
+                        typ: file_typ(),
+                        expr: Box::new(Expr::EClone { loc: loc(), name: "a".to_string() }),
+                    },
+                    use_var("a"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.is_empty(), "clone of droppable should be allowed, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_call_arg_moves_ref_arg_does_not() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "consume",
+            vec![Param::POwn { name: "f".to_string(), typ: file_typ() }],
+            Expr::EVoid { loc: loc() },
+            Safety::Safe,
+        ));
+        defs.push(make_func(
+            "inspect",
+            vec![Param::PRef { name: "f".to_string(), typ: file_typ() }],
+            Expr::EVoid { loc: loc() },
+            Safety::Safe,
+        ));
+        // ref arg does not move: inspect(a); use a → ok
+        defs.push(make_func(
+            "ok_fn",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::ECall {
+                            loc: loc(),
+                            name: "inspect".to_string(),
+                            type_args: vec![],
+                            args: vec![Expr::EVar { loc: loc(), name: "a".to_string() }],
+                        }),
+                    },
+                    use_var("a"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        // own arg moves: consume(b); use b → E0001
+        defs.push(make_func(
+            "bad_fn",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("b"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::ECall {
+                            loc: loc(),
+                            name: "consume".to_string(),
+                            type_args: vec![],
+                            args: vec![Expr::EVar { loc: loc(), name: "b".to_string() }],
+                        }),
+                    },
+                    use_var("b"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "expected E0001 for own-arg reuse, got: {:?}", errs);
+        assert_eq!(errs.iter().filter(|e| e.code == "E0001").count(), 1, "ref arg must not move, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_branch_inconsistent_move_errors() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::EIf {
+                            loc: loc(),
+                            cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                            then: Box::new(Expr::EBlock {
+                                loc: loc(),
+                                stmts: vec![Stmt::SExpr {
+                                    loc: loc(),
+                                    expr: Box::new(Expr::EMove { loc: loc(), name: "a".to_string() }),
+                                }],
+                                result: None,
+                            }),
+                            else_: None,
+                        }),
+                    },
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0033"), "expected E0033, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_both_branches_move_ok() {
+        let move_a_block = Expr::EBlock {
+            loc: loc(),
+            stmts: vec![Stmt::SExpr {
+                loc: loc(),
+                expr: Box::new(Expr::EMove { loc: loc(), name: "a".to_string() }),
+            }],
+            result: None,
+        };
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::EIf {
+                            loc: loc(),
+                            cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                            then: Box::new(move_a_block.clone()),
+                            else_: Some(Box::new(move_a_block)),
+                        }),
+                    },
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(!errs.iter().any(|e| e.code == "E0033"), "both branches move is legal, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_non_droppable_struct_second_use_still_allowed() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("Point", vec![FieldDef { name: "x".to_string(), typ: Typ::TInt }]),
+            make_func(
+                "main",
+                vec![],
+                Expr::EBlock {
+                    loc: loc(),
+                    stmts: vec![
+                        Stmt::SLetTyped {
+                            loc: loc(),
+                            name: "p".to_string(),
+                            typ: Typ::TStruct {
+                                name: "Point".to_string(),
+                                fields: vec![],
+                                type_args: vec![],
+                            },
+                            expr: Box::new(Expr::EStructLit {
+                                loc: loc(),
+                                name: "Point".to_string(),
+                                fields: vec![ValueField {
+                                    name: "x".to_string(),
+                                    value: Expr::EInt { loc: loc(), value: 1 },
+                                }],
+                                type_args: vec![],
+                            }),
+                        },
+                        Stmt::SLetTyped {
+                            loc: loc(),
+                            name: "q".to_string(),
+                            typ: Typ::TStruct {
+                                name: "Point".to_string(),
+                                fields: vec![],
+                                type_args: vec![],
+                            },
+                            expr: Box::new(Expr::EVar { loc: loc(), name: "p".to_string() }),
+                        },
+                        use_var("p"),
+                    ],
+                    result: None,
+                },
+                Safety::Safe,
+            ),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.is_empty(), "non-droppable struct copy must stay legal, got: {:?}", errs);
     }
 }
