@@ -24,6 +24,30 @@ pub fn desugar_drops(defs: &mut [Def]) {
     if drop_fns.is_empty() {
         return;
     }
+    let mut struct_fields: HashMap<String, Vec<FieldDef>> = HashMap::new();
+    for def in defs.iter() {
+        if let Def::DStruct { name, fields, .. } = def {
+            struct_fields.insert(name.clone(), fields.clone());
+        }
+    }
+    // Droppability is infectious: a struct containing a droppable field (at
+    // any nesting depth) needs drop glue even without its own op_drop.
+    let mut droppable: HashSet<String> = drop_fns.keys().cloned().collect();
+    loop {
+        let before = droppable.len();
+        for (name, fields) in &struct_fields {
+            if !droppable.contains(name)
+                && fields.iter().any(|f| {
+                    matches!(&f.typ, Typ::TStruct { name: fs, .. } if droppable.contains(fs))
+                })
+            {
+                droppable.insert(name.clone());
+            }
+        }
+        if droppable.len() == before {
+            break;
+        }
+    }
     let mut fn_returns: HashMap<String, Option<Typ>> = HashMap::new();
     for def in defs.iter() {
         if let Def::DFunc { name, returns, .. } = def {
@@ -33,6 +57,8 @@ pub fn desugar_drops(defs: &mut [Def]) {
     let ctx = Ctx {
         drop_fns: &drop_fns,
         fn_returns: &fn_returns,
+        struct_fields: &struct_fields,
+        droppable: &droppable,
     };
     for def in defs.iter_mut() {
         match def {
@@ -61,6 +87,8 @@ pub fn desugar_drops(defs: &mut [Def]) {
 struct Ctx<'a> {
     drop_fns: &'a HashMap<String, String>,
     fn_returns: &'a HashMap<String, Option<Typ>>,
+    struct_fields: &'a HashMap<String, Vec<FieldDef>>,
+    droppable: &'a HashSet<String>,
 }
 
 #[derive(Default)]
@@ -86,7 +114,7 @@ impl State {
 impl<'a> Ctx<'a> {
     fn droppable_struct(&self, typ: &Typ) -> Option<String> {
         if let Typ::TStruct { name, .. } = typ {
-            if self.drop_fns.contains_key(name) {
+            if self.droppable.contains(name) {
                 return Some(name.clone());
             }
         }
@@ -96,7 +124,7 @@ impl<'a> Ctx<'a> {
     fn infer_droppable(&self, expr: &Expr, state: &State) -> Option<String> {
         match expr {
             Expr::EStructLit { name, .. } => {
-                if self.drop_fns.contains_key(name) {
+                if self.droppable.contains(name) {
                     Some(name.clone())
                 } else {
                     None
@@ -116,19 +144,48 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn drop_stmt(&self, loc: &Loc, var: &str, struct_name: &str) -> Stmt {
-        Stmt::SExpr {
-            loc: loc.clone(),
-            expr: Box::new(Expr::ECall {
+    /// Rust destruction order: the value's own op_drop (if registered) runs
+    /// first, then droppable fields recursively in declaration order.
+    fn emit_glue(&self, loc: &Loc, base: &Expr, struct_name: &str, out: &mut Vec<Stmt>) {
+        if let Some(f) = self.drop_fns.get(struct_name) {
+            out.push(Stmt::SExpr {
                 loc: loc.clone(),
-                name: self.drop_fns[struct_name].clone(),
-                type_args: vec![],
-                args: vec![Expr::EVar {
+                expr: Box::new(Expr::ECall {
                     loc: loc.clone(),
-                    name: var.to_string(),
-                }],
-            }),
+                    name: f.clone(),
+                    type_args: vec![],
+                    args: vec![base.clone()],
+                }),
+            });
         }
+        if let Some(fields) = self.struct_fields.get(struct_name) {
+            for fd in fields {
+                if let Typ::TStruct { name: fs, .. } = &fd.typ {
+                    if self.droppable.contains(fs) {
+                        let fa = Expr::EFieldAccess {
+                            loc: loc.clone(),
+                            expr: Box::new(base.clone()),
+                            field: fd.name.clone(),
+                        };
+                        self.emit_glue(loc, &fa, fs, out);
+                    }
+                }
+            }
+        }
+    }
+
+    fn drop_stmts(&self, loc: &Loc, var: &str, struct_name: &str) -> Vec<Stmt> {
+        let mut out = Vec::new();
+        self.emit_glue(
+            loc,
+            &Expr::EVar {
+                loc: loc.clone(),
+                name: var.to_string(),
+            },
+            struct_name,
+            &mut out,
+        );
+        out
     }
 
     /// Live droppables of the innermost scope, in reverse declaration order.
@@ -223,7 +280,7 @@ impl<'a> Ctx<'a> {
                         out.push(stmt);
                     } else if is_exit_simple(expr) {
                         for (v, sn) in &drops {
-                            out.push(self.drop_stmt(&loc, v, sn));
+                            out.extend(self.drop_stmts(&loc, v, sn));
                         }
                         out.push(stmt);
                     } else {
@@ -244,7 +301,7 @@ impl<'a> Ctx<'a> {
                             });
                         }
                         for (v, sn) in &drops {
-                            out.push(self.drop_stmt(&loc, v, sn));
+                            out.extend(self.drop_stmts(&loc, v, sn));
                         }
                         out.push(stmt);
                     }
@@ -255,7 +312,31 @@ impl<'a> Ctx<'a> {
                         state.moved.insert(r);
                     }
                 }
-                Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
+                Stmt::SExpr { loc, expr } => {
+                    // Statement-position `drop(x)`: expand to full drop glue
+                    // (own op_drop, then droppable fields recursively).
+                    let mut expanded = false;
+                    if let Expr::ECall { name, args, .. } = expr.as_ref() {
+                        if name == "drop" {
+                            if let Some(
+                                Expr::EVar { name: v, .. } | Expr::EMove { name: v, .. },
+                            ) = args.first()
+                            {
+                                let v = v.clone();
+                                if let Some(sn) = state.types.get(&v).cloned() {
+                                    out.extend(self.drop_stmts(loc, &v, &sn));
+                                    state.moved.insert(v);
+                                    expanded = true;
+                                }
+                            }
+                        }
+                    }
+                    if !expanded {
+                        self.walk_expr(expr, state);
+                        out.push(stmt);
+                    }
+                }
+                Stmt::SAssign { expr, .. } => {
                     self.walk_expr(expr, state);
                     out.push(stmt);
                 }
@@ -280,12 +361,12 @@ impl<'a> Ctx<'a> {
             match result.as_deref() {
                 None => {
                     for (v, sn) in &drops {
-                        out.push(self.drop_stmt(block_loc, v, sn));
+                        out.extend(self.drop_stmts(block_loc, v, sn));
                     }
                 }
                 Some(r) if is_exit_simple(r) => {
                     for (v, sn) in &drops {
-                        out.push(self.drop_stmt(block_loc, v, sn));
+                        out.extend(self.drop_stmts(block_loc, v, sn));
                     }
                 }
                 Some(_) => {
@@ -298,7 +379,7 @@ impl<'a> Ctx<'a> {
                         expr: Box::new(res_expr),
                     });
                     for (v, sn) in &drops {
-                        out.push(self.drop_stmt(block_loc, v, sn));
+                        out.extend(self.drop_stmts(block_loc, v, sn));
                     }
                     *result = Some(Box::new(Expr::EVar {
                         loc: block_loc.clone(),
@@ -359,13 +440,15 @@ impl<'a> Ctx<'a> {
                 {
                     let v = v.clone();
                     if let Some(sn) = state.types.get(&v).cloned() {
-                        *name = self.drop_fns[&sn].clone();
-                        if let Some(a) = args.first_mut() {
-                            if let Expr::EMove { loc, .. } = a {
-                                *a = Expr::EVar {
-                                    loc: loc.clone(),
-                                    name: v.clone(),
-                                };
+                        if let Some(f) = self.drop_fns.get(&sn) {
+                            *name = f.clone();
+                            if let Some(a) = args.first_mut() {
+                                if let Expr::EMove { loc, .. } = a {
+                                    *a = Expr::EVar {
+                                        loc: loc.clone(),
+                                        name: v.clone(),
+                                    };
+                                }
                             }
                         }
                         state.moved.insert(v);
@@ -723,5 +806,193 @@ mod tests {
         // let a; drop(a) → file_close(a) ; NO extra scope-exit drop
         assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
         assert_eq!(drop_call_target(&stmts[1]), Some(("file_close", "a")));
+    }
+
+    // ── recursive glue ──────────────────────────────────────────────
+
+    fn handle_typ() -> Typ {
+        Typ::TStruct {
+            name: "Handle".to_string(),
+            fields: vec![],
+            type_args: vec![],
+        }
+    }
+
+    fn handle_struct() -> Def {
+        Def::DStruct {
+            loc: loc(),
+            name: "Handle".to_string(),
+            fields: vec![FieldDef {
+                name: "f".to_string(),
+                typ: file_typ(),
+            }],
+            type_params: vec![],
+        }
+    }
+
+    fn let_handle(name: &str) -> Stmt {
+        Stmt::SLetTyped {
+            loc: loc(),
+            name: name.to_string(),
+            typ: handle_typ(),
+            expr: Box::new(Expr::EStructLit {
+                loc: loc(),
+                name: "Handle".to_string(),
+                fields: vec![],
+                type_args: vec![],
+            }),
+        }
+    }
+
+    /// Renders `SExpr(ECall(fn, [path]))` as `"fn(path)"` where path is a
+    /// var / field-access chain, e.g. `"file_close(h.f)"`.
+    fn call_repr(stmt: &Stmt) -> Option<String> {
+        fn path_of(e: &Expr) -> Option<String> {
+            match e {
+                Expr::EVar { name, .. } => Some(name.clone()),
+                Expr::EFieldAccess { expr, field, .. } => {
+                    Some(format!("{}.{}", path_of(expr)?, field))
+                }
+                _ => None,
+            }
+        }
+        if let Stmt::SExpr { expr, .. } = stmt {
+            if let Expr::ECall { name, args, .. } = expr.as_ref() {
+                if let Some(a) = args.first() {
+                    return Some(format!("{}({})", name, path_of(a)?));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_glue_only_struct_drops_field_at_scope_exit() {
+        let mut defs = vec![
+            file_struct(),
+            handle_struct(),
+            drop_impl(),
+            file_close_fn(),
+            make_fn("main", vec![], vec![let_handle("h")], None),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        assert_eq!(call_repr(&stmts[1]).as_deref(), Some("file_close(h.f)"));
+    }
+
+    #[test]
+    fn test_self_drop_before_field_drop() {
+        let mut defs = vec![
+            file_struct(),
+            handle_struct(),
+            drop_impl(),
+            Def::DImpl {
+                loc: loc(),
+                struct_name: "Handle".to_string(),
+                impls: vec![ImplExpr {
+                    op: ImplOp::ImDrop,
+                    func: "handle_close".to_string(),
+                    loc: loc(),
+                }],
+            },
+            file_close_fn(),
+            Def::DFunc {
+                loc: loc(),
+                name: "handle_close".to_string(),
+                type_params: vec![],
+                params: vec![Param::PRef {
+                    name: "self".to_string(),
+                    typ: handle_typ(),
+                }],
+                returns: None,
+                body: Box::new(Expr::EBlock {
+                    loc: loc(),
+                    stmts: vec![],
+                    result: None,
+                }),
+                safety: Safety::Safe,
+                is_async: false,
+                type_bounds: vec![],
+            },
+            make_fn("main", vec![], vec![let_handle("h")], None),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        assert_eq!(stmts.len(), 3, "got: {:?}", stmts);
+        assert_eq!(call_repr(&stmts[1]).as_deref(), Some("handle_close(h)"));
+        assert_eq!(call_repr(&stmts[2]).as_deref(), Some("file_close(h.f)"));
+    }
+
+    #[test]
+    fn test_multi_level_nesting_glue_order() {
+        let outer_struct = Def::DStruct {
+            loc: loc(),
+            name: "Outer".to_string(),
+            fields: vec![FieldDef {
+                name: "h".to_string(),
+                typ: handle_typ(),
+            }],
+            type_params: vec![],
+        };
+        let let_outer = Stmt::SLetTyped {
+            loc: loc(),
+            name: "o".to_string(),
+            typ: Typ::TStruct {
+                name: "Outer".to_string(),
+                fields: vec![],
+                type_args: vec![],
+            },
+            expr: Box::new(Expr::EStructLit {
+                loc: loc(),
+                name: "Outer".to_string(),
+                fields: vec![],
+                type_args: vec![],
+            }),
+        };
+        let mut defs = vec![
+            file_struct(),
+            handle_struct(),
+            outer_struct,
+            drop_impl(),
+            file_close_fn(),
+            make_fn("main", vec![], vec![let_outer], None),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        assert_eq!(call_repr(&stmts[1]).as_deref(), Some("file_close(o.h.f)"));
+    }
+
+    #[test]
+    fn test_drop_builtin_on_glue_struct_expands_to_glue() {
+        let mut defs = vec![
+            file_struct(),
+            handle_struct(),
+            drop_impl(),
+            file_close_fn(),
+            make_fn(
+                "main",
+                vec![],
+                vec![
+                    let_handle("h"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::ECall {
+                            loc: loc(),
+                            name: "drop".to_string(),
+                            type_args: vec![],
+                            args: vec![Expr::EVar { loc: loc(), name: "h".to_string() }],
+                        }),
+                    },
+                ],
+                None,
+            ),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        // let h; drop(h) → file_close(h.f) ; NO extra scope-exit drop
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        assert_eq!(call_repr(&stmts[1]).as_deref(), Some("file_close(h.f)"));
     }
 }

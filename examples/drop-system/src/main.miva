@@ -45,6 +45,32 @@ branchy = (flag: bool) => {
   printlns!("branch done");
 }
 
+Handle = struct {
+  f: File,
+}
+
+handle_close = (ref self: Handle) => {
+  printlns!("close handle");
+}
+
+impl Handle {
+  op_drop handle_close,
+}
+
+Wrapper = struct {
+  h: Handle,
+}
+
+nested = () => {
+  let h Handle = struct Handle { f = struct File { id = 8 } };
+  printlns!("nested end");
+}
+
+wrapped = () => {
+  let w Wrapper = struct Wrapper { h = struct Handle { f = struct File { id = 9 } } };
+  printlns!("wrapped end");
+}
+
 main = () => {
   printlns!("start");
   let a File = struct File { id = 1 };
@@ -59,5 +85,7 @@ main = () => {
   printlns!(r);
   early();
   branchy(true);
+  nested();
+  wrapped();
   printlns!("end");
 }

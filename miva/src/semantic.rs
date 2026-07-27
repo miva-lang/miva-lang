@@ -703,7 +703,7 @@ pub fn check_program_with(
         })
         .collect();
 
-    let droppable: HashSet<String> = defs
+    let mut droppable: HashSet<String> = defs
         .iter()
         .filter_map(|d| match d {
             Def::DImpl {
@@ -714,6 +714,21 @@ pub fn check_program_with(
             _ => None,
         })
         .collect();
+    // Droppability is infectious: a struct containing a droppable field (at
+    // any nesting depth) is itself droppable, even without its own op_drop.
+    loop {
+        let before = droppable.len();
+        for (name, fields) in &types {
+            if !droppable.contains(name)
+                && fields.iter().any(|f| is_droppable_typ(&droppable, &f.typ))
+            {
+                droppable.insert(name.clone());
+            }
+        }
+        if droppable.len() == before {
+            break;
+        }
+    }
 
     for def in defs {
         match def {
@@ -2559,5 +2574,131 @@ mod tests {
         ));
         let errs = check_program(&defs);
         assert!(!errs.iter().any(|e| e.code == "E0033"), "drop in one branch + move in other should be consistent, got: {:?}", errs);
+    }
+
+    // ── infectious droppability (recursive glue) ────────────────────
+
+    fn handle_typ() -> Typ {
+        Typ::TStruct {
+            name: "Handle".to_string(),
+            fields: vec![],
+            type_args: vec![],
+        }
+    }
+
+    fn glue_defs() -> Vec<Def> {
+        // Handle contains a File but registers no op_drop of its own.
+        let mut defs = drop_defs();
+        defs.push(make_struct(
+            "Handle",
+            vec![FieldDef { name: "f".to_string(), typ: file_typ() }],
+        ));
+        defs
+    }
+
+    #[test]
+    fn test_glue_struct_is_move_only() {
+        let mut defs = glue_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "h".to_string(),
+                        typ: handle_typ(),
+                        expr: Box::new(Expr::EStructLit {
+                            loc: loc(),
+                            name: "Handle".to_string(),
+                            fields: vec![ValueField {
+                                name: "f".to_string(),
+                                value: Expr::EMove { loc: loc(), name: "a".to_string() },
+                            }],
+                            type_args: vec![],
+                        }),
+                    },
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "h2".to_string(),
+                        typ: handle_typ(),
+                        expr: Box::new(Expr::EVar { loc: loc(), name: "h".to_string() }),
+                    },
+                    use_var("h"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "glue struct must be move-only, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_deeply_nested_glue_struct_is_move_only() {
+        let mut defs = glue_defs();
+        defs.push(make_struct(
+            "Outer",
+            vec![FieldDef {
+                name: "h".to_string(),
+                typ: handle_typ(),
+            }],
+        ));
+        let outer_typ = Typ::TStruct {
+            name: "Outer".to_string(),
+            fields: vec![],
+            type_args: vec![],
+        };
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "h".to_string(),
+                        typ: handle_typ(),
+                        expr: Box::new(Expr::EStructLit {
+                            loc: loc(),
+                            name: "Handle".to_string(),
+                            fields: vec![ValueField {
+                                name: "f".to_string(),
+                                value: Expr::EMove { loc: loc(), name: "a".to_string() },
+                            }],
+                            type_args: vec![],
+                        }),
+                    },
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "o".to_string(),
+                        typ: outer_typ.clone(),
+                        expr: Box::new(Expr::EStructLit {
+                            loc: loc(),
+                            name: "Outer".to_string(),
+                            fields: vec![ValueField {
+                                name: "h".to_string(),
+                                value: Expr::EMove { loc: loc(), name: "h".to_string() },
+                            }],
+                            type_args: vec![],
+                        }),
+                    },
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "o2".to_string(),
+                        typ: outer_typ,
+                        expr: Box::new(Expr::EVar { loc: loc(), name: "o".to_string() }),
+                    },
+                    use_var("o"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "nested glue struct must be move-only, got: {:?}", errs);
     }
 }
