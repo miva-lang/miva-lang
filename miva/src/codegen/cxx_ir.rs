@@ -468,35 +468,30 @@ fn lower_stmt(ctx: &mut IrContext, stmt: &Stmt) -> Vec<IrStmt> {
             vec![IrStmt::Return(lower_expr(ctx, expr))]
         }
         Stmt::SExpr { expr, .. } => {
+            // In statement position a loop yields no value, so a trailing
+            // expression is still executed for its effects.
+            fn loop_body_stmts(ctx: &mut IrContext, body: &Expr) -> Vec<IrStmt> {
+                let (mut body_stmts, body_result) = lower_block(ctx, body);
+                if let Some(r) = body_result {
+                    body_stmts.push(IrStmt::Expr(r));
+                }
+                body_stmts
+            }
             match expr.as_ref() {
                 Expr::EWhile { cond, body, .. } => {
-                    let (mut body_stmts, body_result) = lower_block(ctx, body);
-                    // In statement position the loop yields no value, so a
-                    // trailing expression is still executed for its effects.
-                    if let Some(r) = body_result {
-                        body_stmts.push(IrStmt::Expr(r));
-                    }
                     vec![IrStmt::While {
                         cond: lower_expr(ctx, cond),
-                        body: body_stmts,
+                        body: loop_body_stmts(ctx, body),
                     }]
                 }
                 Expr::ELoop { body, .. } => {
-                    let (mut body_stmts, body_result) = lower_block(ctx, body);
-                    if let Some(r) = body_result {
-                        body_stmts.push(IrStmt::Expr(r));
-                    }
-                    vec![IrStmt::Loop { body: body_stmts }]
+                    vec![IrStmt::Loop { body: loop_body_stmts(ctx, body) }]
                 }
                 Expr::EFor { var, range, body, .. } => {
-                    let (mut body_stmts, body_result) = lower_block(ctx, body);
-                    if let Some(r) = body_result {
-                        body_stmts.push(IrStmt::Expr(r));
-                    }
                     vec![IrStmt::For {
                         var: var.clone(),
                         range: lower_expr(ctx, range),
-                        body: body_stmts,
+                        body: loop_body_stmts(ctx, body),
                     }]
                 }
                 Expr::EBlock { stmts, result, .. } => {
@@ -989,49 +984,35 @@ fn emit_block(stmts: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expe
     format!("([&]() {{\n{}{}{}}})()", stmt_strs, result_str, ind)
 }
 
-fn emit_while(cond: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
-    let cond_str = emit_expr(cond, depth, expected_type);
+fn emit_loop_body(body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>, result_prefix: &str) -> String {
     let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
-    // A trailing expression runs each iteration for its effects; `return`
-    // here would exit the wrapping lambda after the first iteration.
     let result_str = match result {
-        Some(e) => format!("{}{};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
+        Some(e) => format!("{}{}{};\n", indent_str(depth + 1), result_prefix, emit_expr(e, depth + 1, expected_type)),
         None => String::new(),
     };
-    let body_str = if stmt_strs.is_empty() && result_str.is_empty() {
+    if stmt_strs.is_empty() && result_str.is_empty() {
         String::new()
     } else {
         format!("{{\n{}{}\n{}}}", stmt_strs, result_str, indent_str(depth))
-    };
+    }
+}
+
+fn emit_while(cond: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
+    let cond_str = emit_expr(cond, depth, expected_type);
+    // A trailing expression runs each iteration for its effects; `return`
+    // here would exit the wrapping lambda after the first iteration.
+    let body_str = emit_loop_body(body, result, depth, expected_type, "");
     format!("([&]() {{ while ({}) {{ {} ;}}}})()", cond_str, body_str)
 }
 
 fn emit_loop(body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
-    let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
-    let result_str = match result {
-        Some(e) => format!("{}return {};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
-        None => String::new(),
-    };
-    let body_str = if stmt_strs.is_empty() && result_str.is_empty() {
-        String::new()
-    } else {
-        format!("{{\n{}{}\n{}}}", stmt_strs, result_str, indent_str(depth))
-    };
+    let body_str = emit_loop_body(body, result, depth, expected_type, "return ");
     format!("([&]() {{ for (;;) {{ {} ;}}}})()", body_str)
 }
 
 fn emit_for(var: &str, range: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
     let range_str = emit_expr(range, depth, expected_type);
-    let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
-    let result_str = match result {
-        Some(e) => format!("{}{};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
-        None => String::new(),
-    };
-    let body_str = if stmt_strs.is_empty() && result_str.is_empty() {
-        String::new()
-    } else {
-        format!("{{\n{}{}\n{}}}", stmt_strs, result_str, indent_str(depth))
-    };
+    let body_str = emit_loop_body(body, result, depth, expected_type, "");
     format!(
         "([&]() {{ for (const auto& {} : {}) {{ {} ;}}}})()",
         var, range_str, body_str
