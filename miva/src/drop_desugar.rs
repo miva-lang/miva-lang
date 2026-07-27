@@ -352,6 +352,26 @@ impl<'a> Ctx<'a> {
                 self.walk_expr(range, state);
                 self.walk_expr(body, state);
             }
+            Expr::ECall { name, args, .. } if name == "drop" => {
+                // Builtin early-drop: `drop(x)` becomes a direct call to the
+                // registered drop fn, and x is consumed (no scope-exit drop).
+                if let Some(Expr::EVar { name: v, .. } | Expr::EMove { name: v, .. }) = args.first()
+                {
+                    let v = v.clone();
+                    if let Some(sn) = state.types.get(&v).cloned() {
+                        *name = self.drop_fns[&sn].clone();
+                        if let Some(a) = args.first_mut() {
+                            if let Expr::EMove { loc, .. } = a {
+                                *a = Expr::EVar {
+                                    loc: loc.clone(),
+                                    name: v.clone(),
+                                };
+                            }
+                        }
+                        state.moved.insert(v);
+                    }
+                }
+            }
             Expr::ECall { args, .. } | Expr::EMacro { args, .. } => {
                 for a in args {
                     self.walk_expr(a, state);
@@ -672,5 +692,36 @@ mod tests {
             }
         }
         panic!("expected inner block");
+    }
+
+    #[test]
+    fn test_explicit_drop_call_rewritten_and_no_scope_exit_dup() {
+        let mut defs = vec![
+            file_struct(),
+            drop_impl(),
+            file_close_fn(),
+            make_fn(
+                "main",
+                vec![],
+                vec![
+                    let_file("a"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::ECall {
+                            loc: loc(),
+                            name: "drop".to_string(),
+                            type_args: vec![],
+                            args: vec![Expr::EVar { loc: loc(), name: "a".to_string() }],
+                        }),
+                    },
+                ],
+                None,
+            ),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        // let a; drop(a) → file_close(a) ; NO extra scope-exit drop
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        assert_eq!(drop_call_target(&stmts[1]), Some(("file_close", "a")));
     }
 }

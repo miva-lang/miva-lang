@@ -4,7 +4,7 @@ use crate::ast::*;
 use crate::error::Error;
 
 #[allow(dead_code)]
-pub const BUILTIN_FUNCTIONS_COUNT: usize = 84;
+pub const BUILTIN_FUNCTIONS_COUNT: usize = 85;
 
 const BUILTIN_FUNCTIONS: &[(&str, Safety)] = &[
     ("print", Safety::Safe),
@@ -25,6 +25,7 @@ const BUILTIN_FUNCTIONS: &[(&str, Safety)] = &[
     ("string_from", Safety::Safe),
     ("box_new", Safety::Safe),
     ("box_deref", Safety::Safe),
+    ("drop", Safety::Safe),
     ("range", Safety::Safe),
     ("ptr_alloc", Safety::Unsafe),
     ("ptr_realloc", Safety::Unsafe),

@@ -230,6 +230,28 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                     consume_droppable(ctx, arg);
                 }
             }
+            if name == "drop" {
+                let valid_target = args.len() == 1
+                    && match &args[0] {
+                        Expr::EVar { name: v, .. } | Expr::EMove { name: v, .. } => {
+                            is_droppable_var(ctx, v)
+                                || ctx.vars.get(v.as_str()).map_or(true, |info| {
+                                    // Moved-state vars already erred above (E0001);
+                                    // don't stack E0035 on top.
+                                    info.state == VarState::Moved
+                                        && is_droppable_typ(&ctx.droppable, &info.typ)
+                                })
+                        }
+                        _ => false,
+                    };
+                if !valid_target {
+                    errs.push(Error::new(
+                        "E0035",
+                        loc,
+                        "drop() takes exactly one droppable variable",
+                    ));
+                }
+            }
         }
         Expr::EStructLit { loc, fields, .. } => {
             for vf in fields {
@@ -2389,5 +2411,153 @@ mod tests {
         ];
         let errs = check_program(&defs);
         assert!(errs.is_empty(), "non-droppable struct copy must stay legal, got: {:?}", errs);
+    }
+
+    // ── builtin drop(x) ─────────────────────────────────────────────
+
+    fn drop_call(var: &str) -> Stmt {
+        Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(Expr::ECall {
+                loc: loc(),
+                name: "drop".to_string(),
+                type_args: vec![],
+                args: vec![Expr::EVar { loc: loc(), name: var.to_string() }],
+            }),
+        }
+    }
+
+    #[test]
+    fn test_drop_builtin_marks_var_moved() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![let_file("a"), drop_call("a"), use_var("a")],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "use after drop(a) should be E0001, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_drop_builtin_valid_use_no_errors() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![let_file("a"), drop_call("a")],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.is_empty(), "valid drop(a) should have no errors, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_drop_builtin_on_non_droppable_is_e0035() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    Stmt::SLet {
+                        loc: loc(),
+                        mutable: false,
+                        name: "n".to_string(),
+                        expr: Box::new(Expr::EInt { loc: loc(), value: 1 }),
+                    },
+                    drop_call("n"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0035"), "drop on non-droppable should be E0035, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_drop_builtin_on_complex_expr_is_e0035() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![Stmt::SExpr {
+                    loc: loc(),
+                    expr: Box::new(Expr::ECall {
+                        loc: loc(),
+                        name: "drop".to_string(),
+                        type_args: vec![],
+                        args: vec![file_lit()],
+                    }),
+                }],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0035"), "drop on non-variable should be E0035, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_drop_in_one_branch_move_in_other_is_consistent() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "consume",
+            vec![Param::POwn { name: "f".to_string(), typ: file_typ() }],
+            Expr::EVoid { loc: loc() },
+            Safety::Safe,
+        ));
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SExpr {
+                        loc: loc(),
+                        expr: Box::new(Expr::EIf {
+                            loc: loc(),
+                            cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                            then: Box::new(Expr::EBlock {
+                                loc: loc(),
+                                stmts: vec![drop_call("a")],
+                                result: None,
+                            }),
+                            else_: Some(Box::new(Expr::EBlock {
+                                loc: loc(),
+                                stmts: vec![Stmt::SExpr {
+                                    loc: loc(),
+                                    expr: Box::new(Expr::ECall {
+                                        loc: loc(),
+                                        name: "consume".to_string(),
+                                        type_args: vec![],
+                                        args: vec![Expr::EMove { loc: loc(), name: "a".to_string() }],
+                                    }),
+                                }],
+                                result: None,
+                            })),
+                        }),
+                    },
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(!errs.iter().any(|e| e.code == "E0033"), "drop in one branch + move in other should be consistent, got: {:?}", errs);
     }
 }

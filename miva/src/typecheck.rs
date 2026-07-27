@@ -2165,6 +2165,127 @@ fn infer_type(
     }
 }
 
+// Drop functions registered via `op_drop` are sealed: only the compiler's
+// desugaring pass may invoke them, so any user-written call or value use is
+// rejected (E0034).
+fn seal_check_expr(expr: &Expr, sealed: &std::collections::HashSet<&str>, errs: &mut Vec<Error>) {
+    match expr {
+        Expr::EVar { loc, name } => {
+            if sealed.contains(name.as_str()) {
+                errs.push(Error::new(
+                    "E0034",
+                    loc,
+                    &format!("drop function '{}' is sealed and cannot be used as a value", name),
+                ));
+            }
+        }
+        Expr::ECall { loc, name, args, .. } => {
+            if sealed.contains(name.as_str()) {
+                errs.push(Error::new(
+                    "E0034",
+                    loc,
+                    &format!("drop function '{}' is sealed and cannot be called directly; use drop(x) instead", name),
+                ));
+            }
+            for a in args {
+                seal_check_expr(a, sealed, errs);
+            }
+        }
+        Expr::EMethodCall { expr, args, .. } => {
+            seal_check_expr(expr, sealed, errs);
+            for a in args {
+                seal_check_expr(a, sealed, errs);
+            }
+        }
+        Expr::EMacro { args, .. } => {
+            for a in args {
+                seal_check_expr(a, sealed, errs);
+            }
+        }
+        Expr::EStructLit { fields, .. } => {
+            for f in fields {
+                seal_check_expr(&f.value, sealed, errs);
+            }
+        }
+        Expr::EFieldAccess { expr, .. }
+        | Expr::ECast { expr, .. }
+        | Expr::EAddr { expr, .. }
+        | Expr::EDeref { expr, .. } => seal_check_expr(expr, sealed, errs),
+        Expr::EBinOp { left, right, .. } => {
+            seal_check_expr(left, sealed, errs);
+            seal_check_expr(right, sealed, errs);
+        }
+        Expr::EIf { cond, then, else_, .. } => {
+            seal_check_expr(cond, sealed, errs);
+            seal_check_expr(then, sealed, errs);
+            if let Some(e) = else_ {
+                seal_check_expr(e, sealed, errs);
+            }
+        }
+        Expr::EChoose { var, cases, otherwise, .. } => {
+            seal_check_expr(var, sealed, errs);
+            for c in cases {
+                seal_check_expr(&c.when, sealed, errs);
+                if let Some(g) = &c.guard {
+                    seal_check_expr(g, sealed, errs);
+                }
+                seal_check_expr(&c.then, sealed, errs);
+            }
+            if let Some(o) = otherwise {
+                seal_check_expr(o, sealed, errs);
+            }
+        }
+        Expr::EBlock { stmts, result, .. } => {
+            for s in stmts {
+                seal_check_stmt(s, sealed, errs);
+            }
+            if let Some(r) = result {
+                seal_check_expr(r, sealed, errs);
+            }
+        }
+        Expr::EArrayLit { values, .. } => {
+            for v in values {
+                seal_check_expr(v, sealed, errs);
+            }
+        }
+        Expr::EWhile { cond, body, .. } => {
+            seal_check_expr(cond, sealed, errs);
+            seal_check_expr(body, sealed, errs);
+        }
+        Expr::ELoop { body, .. } => seal_check_expr(body, sealed, errs),
+        Expr::EFor { range, body, .. } => {
+            seal_check_expr(range, sealed, errs);
+            seal_check_expr(body, sealed, errs);
+        }
+        Expr::ELambda { body, .. } => seal_check_expr(body, sealed, errs),
+        Expr::EInt { .. }
+        | Expr::EBool { .. }
+        | Expr::EFloat { .. }
+        | Expr::EChar { .. }
+        | Expr::EString { .. }
+        | Expr::EMove { .. }
+        | Expr::EClone { .. }
+        | Expr::EMacroVar { .. }
+        | Expr::EEnumPattern { .. }
+        | Expr::EVoid { .. } => {}
+    }
+}
+
+fn seal_check_stmt(stmt: &Stmt, sealed: &std::collections::HashSet<&str>, errs: &mut Vec<Error>) {
+    match stmt {
+        Stmt::SLet { expr, .. }
+        | Stmt::SLetTyped { expr, .. }
+        | Stmt::SAssign { expr, .. }
+        | Stmt::SReturn { expr, .. }
+        | Stmt::SExpr { expr, .. } => seal_check_expr(expr, sealed, errs),
+        Stmt::SFieldAssign { target, expr, .. } => {
+            seal_check_expr(target, sealed, errs);
+            seal_check_expr(expr, sealed, errs);
+        }
+        Stmt::SCIntro { .. } | Stmt::SEmpty { .. } => {}
+    }
+}
+
 pub fn check_program(defs: &[Def]) -> Vec<Error> {
     check_program_with(
         defs,
@@ -2254,6 +2375,16 @@ pub fn check_program_with(
                     }
                 }
                 drop_registry.insert(struct_name.clone(), imp.func.clone());
+            }
+        }
+    }
+
+    let sealed_fns: std::collections::HashSet<&str> =
+        drop_registry.values().map(|s| s.as_str()).collect();
+    if !sealed_fns.is_empty() {
+        for def in defs {
+            if let Def::DFunc { body, .. } = def {
+                seal_check_expr(body, &sealed_fns, &mut errs);
             }
         }
     }
@@ -4573,5 +4704,86 @@ mod tests {
         ];
         let errs = check_program(&defs);
         assert!(errs.iter().any(|e| e.code == "E0032"), "duplicate op_drop should be E0032, got: {:?}", errs);
+    }
+
+    fn sealed_defs(main_body: Expr) -> Vec<Def> {
+        vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_file_close(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+                None,
+            ),
+            make_drop_impl("File", "file_close"),
+            make_func("main", vec![], None, main_body, Safety::Safe),
+        ]
+    }
+
+    #[test]
+    fn test_sealed_drop_fn_direct_call_is_e0034() {
+        let defs = sealed_defs(Expr::EBlock {
+            loc: loc(),
+            stmts: vec![
+                Stmt::SLetTyped {
+                    loc: loc(),
+                    name: "f".to_string(),
+                    typ: file_struct_typ(),
+                    expr: Box::new(Expr::EStructLit {
+                        loc: loc(),
+                        name: "File".to_string(),
+                        type_args: vec![],
+                        fields: vec![ValueField {
+                            name: "fd".to_string(),
+                            value: Expr::EInt { loc: loc(), value: 1 },
+                        }],
+                    }),
+                },
+                Stmt::SExpr {
+                    loc: loc(),
+                    expr: Box::new(Expr::ECall {
+                        loc: loc(),
+                        name: "file_close".to_string(),
+                        type_args: vec![],
+                        args: vec![Expr::EVar { loc: loc(), name: "f".to_string() }],
+                    }),
+                },
+            ],
+            result: None,
+        });
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0034"), "direct call of sealed drop fn should be E0034, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_sealed_drop_fn_value_use_is_e0034() {
+        let defs = sealed_defs(Expr::EBlock {
+            loc: loc(),
+            stmts: vec![Stmt::SLet {
+                loc: loc(),
+                mutable: false,
+                name: "g".to_string(),
+                expr: Box::new(Expr::EVar { loc: loc(), name: "file_close".to_string() }),
+            }],
+            result: None,
+        });
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0034"), "value use of sealed drop fn should be E0034, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_drop_fn_body_may_reference_self() {
+        let defs = vec![
+            make_module("test"),
+            make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+            make_file_close(
+                "file_close",
+                vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+                None,
+            ),
+            make_drop_impl("File", "file_close"),
+        ];
+        let errs = check_program(&defs);
+        assert!(errs.is_empty(), "drop fn definition itself should not trigger E0034, got: {:?}", errs);
     }
 }

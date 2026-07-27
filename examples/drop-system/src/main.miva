@@ -28,6 +28,23 @@ async task = (id: int): future[int] => {
   return id * 10;
 }
 
+early = () => {
+  let e File = struct File { id = 6 };
+  printlns!("before early drop");
+  drop(e);
+  printlns!("after early drop");
+}
+
+branchy = (flag: bool) => {
+  let f File = struct File { id = 7 };
+  if (flag) {
+    drop(f);
+  } else {
+    consume(move f);
+  };
+  printlns!("branch done");
+}
+
 main = () => {
   printlns!("start");
   let a File = struct File { id = 1 };
@@ -40,5 +57,7 @@ main = () => {
   consume(move d);
   let r int = await(task(5));
   printlns!(r);
+  early();
+  branchy(true);
   printlns!("end");
 }
