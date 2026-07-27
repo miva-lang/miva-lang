@@ -60,6 +60,17 @@ fn collect_struct_types(defs: &[Def]) -> Vec<String> {
                 }).map(|s| s.to_string()).collect();
                 types.push(format!("%{} = type {{ {} }}", name, field_types.join(", ")));
             }
+            Def::DShape { name, fields, .. } => {
+                let field_types: Vec<String> = fields.iter().map(|f| {
+                    match &f.typ {
+                        Typ::TInt => "i64",
+                        Typ::TBool | Typ::TChar => "i8",
+                        Typ::TFloat64 | Typ::TFloat32 => "double",
+                        _ => "i64",
+                    }
+                }).map(|s| s.to_string()).collect();
+                types.push(format!("%{} = type {{ {} }}", name, field_types.join(", ")));
+            }
             Def::DModule { .. } => {
                 types.extend(collect_struct_types(&defs[1..]));
                 break;
@@ -80,8 +91,42 @@ fn build_struct_field_map(defs: &[Def]) -> HashMap<String, HashMap<String, usize
                     .collect();
                 map.insert(name.clone(), field_idx);
             }
+            Def::DShape { name, fields, .. } => {
+                let field_idx: HashMap<String, usize> = fields.iter().enumerate()
+                    .map(|(i, f)| (f.name.clone(), i))
+                    .collect();
+                map.insert(name.clone(), field_idx);
+            }
             Def::DModule { .. } => {
                 for (k, v) in build_struct_field_map(&defs[1..]) {
+                    map.entry(k).or_insert(v);
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+    map
+}
+
+fn build_struct_field_types(defs: &[Def]) -> HashMap<String, HashMap<String, Typ>> {
+    let mut map = HashMap::new();
+    for def in defs {
+        match def {
+            Def::DStruct { name, fields, .. } => {
+                let field_types: HashMap<String, Typ> = fields.iter()
+                    .map(|f| (f.name.clone(), f.typ.clone()))
+                    .collect();
+                map.insert(name.clone(), field_types);
+            }
+            Def::DShape { name, fields, .. } => {
+                let field_types: HashMap<String, Typ> = fields.iter()
+                    .map(|f| (f.name.clone(), f.typ.clone()))
+                    .collect();
+                map.insert(name.clone(), field_types);
+            }
+            Def::DModule { .. } => {
+                for (k, v) in build_struct_field_types(&defs[1..]) {
                     map.entry(k).or_insert(v);
                 }
                 break;
@@ -315,38 +360,17 @@ struct LlvmCtx {
     tmp_counter: usize,
     string_constants: String,
     current_module: Option<String>,
-    /// Per-variable counter used to generate unique local SSA names for
-    /// allocas and reloads (`s.addr.N` / `s.r.N`). Bumped on every fresh
-    /// alloca or reload so the same variable can be re-declared or
-    /// re-assigned without name collisions. Single global counter — earlier
-    /// the per-name `var_decls` map and the global `tmp_counter` were both
-    /// used to produce `.reload.N` suffixes, which could collide when the
-    /// 20th `SLet` for `s` (suffix 19) shared a number with an earlier
-    /// `SAssign` reload that also landed on suffix 19.
     var_seq: HashMap<String, usize>,
     var_addrs: HashMap<String, String>,
     var_reloads: HashMap<String, String>,
     struct_field_map: HashMap<String, HashMap<String, usize>>,
-    /// Flat mapping from field name to numeric index.
-    /// Built from all struct definitions. If the same field name appears in
-    /// multiple structs at different positions, the first occurrence wins.
+    struct_field_types: HashMap<String, HashMap<String, Typ>>,
     field_idx: HashMap<String, usize>,
     func_sigs: HashMap<String, crate::codegen::FuncSig>,
     string_regs: HashSet<String>,
-    /// Enum definitions: enum name -> (type params, variant -> payload types).
-    /// Used to resolve which payload positions of an enum value hold strings,
-    /// including generic instantiations (e.g. `Box[string]`).
     enum_defs: HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>,
-    /// Per variable name, the payload indices of an enum value it holds that
-    /// carry string values. Lets destructured `choose` bindings (e.g. the `v`
-    /// in `when (Box.Value(v))`) be recognized as strings for codegen.
     string_payloads: HashMap<String, Vec<usize>>,
-    /// Transient: the payload indices of the most recently codegen'd enum
-    /// constructor call result, to be attached to the binding that stores it.
     pending_string_payloads: Vec<usize>,
-    /// Per-variable static type. Used to detect closure-typed variables at
-    /// call sites so they are invoked through a function pointer (indirect
-    /// call) rather than as a top-level function.
     var_types: HashMap<String, Typ>,
 }
 
@@ -361,6 +385,7 @@ impl LlvmCtx {
             var_addrs: HashMap::new(),
             var_reloads: HashMap::new(),
             struct_field_map: HashMap::new(),
+            struct_field_types: HashMap::new(),
             field_idx: HashMap::new(),
             func_sigs: HashMap::new(),
             string_regs: HashSet::new(),
@@ -386,6 +411,7 @@ impl LlvmCtx {
             var_addrs: HashMap::new(),
             var_reloads: HashMap::new(),
             struct_field_map: HashMap::new(),
+            struct_field_types: HashMap::new(),
             field_idx: HashMap::new(),
             func_sigs: HashMap::new(),
             string_regs: HashSet::new(),
@@ -399,6 +425,7 @@ impl LlvmCtx {
     fn with_module_and_fields(
         module: Option<&str>,
         struct_field_map: HashMap<String, HashMap<String, usize>>,
+        struct_field_types: HashMap<String, HashMap<String, Typ>>,
         enum_defs: HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>,
     ) -> Self {
         let mut field_idx = HashMap::new();
@@ -416,6 +443,7 @@ impl LlvmCtx {
             var_addrs: HashMap::new(),
             var_reloads: HashMap::new(),
             struct_field_map,
+            struct_field_types,
             field_idx,
             func_sigs: HashMap::new(),
             string_regs: HashSet::new(),
@@ -516,6 +544,25 @@ fn is_enum_value_expr(expr: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a field access into `base_expr` with `field_name` yields a string.
+fn field_access_is_string(base_expr: &Expr, field_name: &str, ctx: &LlvmCtx) -> bool {
+    if let Expr::EVar { name: var_name, .. } = base_expr {
+        if let Some(typ) = ctx.var_types.get(var_name) {
+            let struct_name = match typ {
+                Typ::TStruct { name, .. } => name.as_str(),
+                Typ::TShape { name, .. } => name.as_str(),
+                _ => "",
+            };
+            if let Some(field_types) = ctx.struct_field_types.get(struct_name) {
+                if let Some(field_typ) = field_types.get(field_name) {
+                    return typ_is_string(field_typ);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Load the `__tag` field (at offset 0) of an enum value held in `reg` and
@@ -1134,16 +1181,45 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                     ));
                     return tmp;
                 }
+                // Base is a variable but not an uppercase enum discriminant.
                 let val = gen_expr(fexpr, ctx, body);
+                // Compute field index based on the base expression's type if it's a known variable.
+                let field_idx = {
+                    let mut idx = None;
+                    if let Expr::EVar { name: ref vname, .. } = **fexpr {
+                        if let Some(typ) = ctx.var_types.get(vname) {
+                            match typ {
+                                Typ::TStruct { name: struct_name, .. } => {
+                                    if let Some(struct_map) = ctx.struct_field_map.get(struct_name) {
+                                        idx = struct_map.get(field).copied();
+                                    }
+                                }
+                                Typ::TShape { name: shape_name, .. } => {
+                                    if let Some(struct_map) = ctx.struct_field_map.get(shape_name) {
+                                        idx = struct_map.get(field).copied();
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    if idx.is_none() {
+                        idx = ctx.field_idx.get(field).copied();
+                    }
+                    idx.unwrap_or(0)
+                };
                 let ptr_val = ctx.gen_tmp("fa_ptr");
                 body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, val));
-                let field_idx = ctx.field_idx.get(field).copied().unwrap_or(0);
                 let gep = ctx.gen_tmp("fa");
                 body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr_val, field_idx));
                 let load = ctx.gen_tmp("fal");
                 body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), load, gep));
+                if field_access_is_string(fexpr.as_ref(), field, ctx) {
+                    ctx.string_regs.insert(load.clone());
+                }
                 load
             } else {
+                // Base expression is not a simple variable; use fallback field index.
                 let val = gen_expr(fexpr, ctx, body);
                 let ptr_val = ctx.gen_tmp("fa_ptr");
                 body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, val));
@@ -1311,6 +1387,7 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
                 ret,
                 lambda_body,
                 &ctx.struct_field_map,
+                &ctx.struct_field_types,
                 &ctx.func_sigs,
                 &ctx.enum_defs,
             );
@@ -1671,7 +1748,8 @@ fn returns_from_sig(sig: &crate::codegen::FuncSig, type_args: &[Typ]) -> bool {
 /// Decide whether binding `name` to `expr` yields a string value, so the
 /// backend stringifies it with `string_from_str` rather than `string_from_int`.
 /// Extends the existing checks with field-access into an enum value whose
-/// payload at that index is known to carry a string.
+/// payload at that index is known to carry a string, and field-access into a
+/// struct/shape field whose type is `TString`.
 fn binding_is_string(expr: &Expr, ctx: &LlvmCtx) -> bool {
     if is_string_expr(expr) || call_returns_string(expr, ctx) {
         return true;
@@ -1684,6 +1762,23 @@ fn binding_is_string(expr: &Expr, ctx: &LlvmCtx) -> bool {
                 if let Some(idxs) = ctx.string_payloads.get(name) {
                     if idxs.contains(&field.parse::<usize>().unwrap_or(usize::MAX)) {
                         return true;
+                    }
+                }
+            }
+        }
+        // `v = struct.field` where `field` is typed as `string` in the struct.
+        if let Expr::EVar { name: var_name, .. } = base.as_ref() {
+            if let Some(typ) = ctx.var_types.get(var_name) {
+                let struct_name = match typ {
+                    Typ::TStruct { name, .. } => name.as_str(),
+                    Typ::TShape { name, .. } => name.as_str(),
+                    _ => "",
+                };
+                if let Some(field_types) = ctx.struct_field_types.get(struct_name) {
+                    if let Some(field_typ) = field_types.get(field) {
+                        if typ_is_string(field_typ) {
+                            return true;
+                        }
                     }
                 }
             }
@@ -1811,13 +1906,12 @@ fn gen_stmt(stmt: &Stmt, ctx: &mut LlvmCtx, body: &mut String) {
 
 fn gen_func_def(
     name: &str, _type_params: &[String], params: &[Param], _returns: &Option<Typ>,
-    body: &Expr, module: Option<&str>, struct_field_map: &HashMap<String, HashMap<String, usize>>,
-    func_sigs: &HashMap<String, crate::codegen::FuncSig>,
+    body: &Expr, module: Option<&str>, struct_field_map: &HashMap<String, HashMap<String, usize>>, struct_field_types: &HashMap<String, HashMap<String, Typ>>, func_sigs: &HashMap<String, crate::codegen::FuncSig>,
     enum_defs: &HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>,
     is_async: bool,
 ) -> String {
     let global_name = make_global_name(module, name);
-    let mut ctx = LlvmCtx::with_module_and_fields(module, struct_field_map.clone(), enum_defs.clone()).with_func_sigs(func_sigs);
+    let mut ctx = LlvmCtx::with_module_and_fields(module, struct_field_map.clone(), struct_field_types.clone(), enum_defs.clone()).with_func_sigs(func_sigs);
     ctx.indent = 1;
     let mut body_prefix = String::new();
     let param_strs: Vec<String>;
@@ -1903,13 +1997,14 @@ fn gen_closure_thunk(
     ret: &Typ,
     body: &Expr,
     struct_field_map: &HashMap<String, HashMap<String, usize>>,
+    struct_field_types: &HashMap<String, HashMap<String, Typ>>,
     func_sigs: &HashMap<String, crate::codegen::FuncSig>,
     enum_defs: &HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>,
 ) -> String {
     let id = CLOSURE_THUNK_ID.fetch_add(1, Ordering::Relaxed);
     let thunk_name = format!("__closure_thunk_{}", id);
 
-    let mut ctx = LlvmCtx::with_module_and_fields(None, struct_field_map.clone(), enum_defs.clone())
+    let mut ctx = LlvmCtx::with_module_and_fields(None, struct_field_map.clone(), struct_field_types.clone(), enum_defs.clone())
         .with_func_sigs(func_sigs);
     ctx.indent = 1;
 
@@ -1973,8 +2068,8 @@ fn gen_closure_thunk(
     thunk_name
 }
 
-fn gen_main_func(body_expr: &Expr, struct_field_map: &HashMap<String, HashMap<String, usize>>, func_sigs: &HashMap<String, crate::codegen::FuncSig>, enum_defs: &HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>) -> String {
-    let mut ctx = LlvmCtx::with_module_and_fields(None, struct_field_map.clone(), enum_defs.clone()).with_func_sigs(func_sigs);
+fn gen_main_func(body_expr: &Expr, struct_field_map: &HashMap<String, HashMap<String, usize>>, struct_field_types: &HashMap<String, HashMap<String, Typ>>, func_sigs: &HashMap<String, crate::codegen::FuncSig>, enum_defs: &HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>) -> String {
+    let mut ctx = LlvmCtx::with_module_and_fields(None, struct_field_map.clone(), struct_field_types.clone(), enum_defs.clone()).with_func_sigs(func_sigs);
     ctx.indent = 1;
     let (argc_addr, _argc_reload) = ctx.declare_var("argc");
     let mut body = String::new();
@@ -2118,7 +2213,7 @@ fn gen_impl(_struct_name: &str, impls: &[ImplExpr]) -> String {
     out
 }
 
-fn generate_with_scope(defs: &[Def], module: Option<&str>, struct_field_map: &HashMap<String, HashMap<String, usize>>, func_sigs: &HashMap<String, crate::codegen::FuncSig>) -> (String, String, String, HashSet<String>) {
+fn generate_with_scope(defs: &[Def], module: Option<&str>, struct_field_map: &HashMap<String, HashMap<String, usize>>, struct_field_types: &HashMap<String, HashMap<String, Typ>>, func_sigs: &HashMap<String, crate::codegen::FuncSig>) -> (String, String, String, HashSet<String>) {
     let mut struct_defs = String::new();
     let mut defs_str = String::new();
     let mut main_functions = String::new();
@@ -2137,7 +2232,7 @@ fn generate_with_scope(defs: &[Def], module: Option<&str>, struct_field_map: &Ha
 
     for def in defs {
         match def {
-            Def::DFunc { name, type_params, params, returns, body, .. } if name == "main" => main_functions.push_str(&gen_main_func(body, struct_field_map, func_sigs, &enum_defs)),
+            Def::DFunc { name, type_params, params, returns, body, .. } if name == "main" => main_functions.push_str(&gen_main_func(body, struct_field_map, struct_field_types, func_sigs, &enum_defs)),
             Def::DCFuncUnsafe { name, params, returns, code, .. } => {
                 let global_name = make_global_name(module, name.as_str());
                 defined.insert(global_name);
@@ -2146,14 +2241,14 @@ fn generate_with_scope(defs: &[Def], module: Option<&str>, struct_field_map: &Ha
             Def::DFunc { name, type_params, params, returns, body, is_async, .. } => {
                 let global_name = make_global_name(module, name.as_str());
                 defined.insert(global_name);
-                defs_str.push_str(&gen_func_def(name, type_params, params, returns, body, module, struct_field_map, func_sigs, &enum_defs, *is_async));
+                defs_str.push_str(&gen_func_def(name, type_params, params, returns, body, module, struct_field_map, struct_field_types, func_sigs, &enum_defs, *is_async));
             }
             Def::DEnum { name, variants, .. } => {
                 struct_defs.push_str(&llvm_enum_def(name, variants));
             }
             Def::DImpl { struct_name, impls, .. } => defs_str.push_str(&gen_impl(struct_name, impls)),
             Def::DModule { name, .. } => {
-                let inner = generate_with_scope(&defs[1..], Some(name.as_str()), struct_field_map, func_sigs);
+                let inner = generate_with_scope(&defs[1..], Some(name.as_str()), struct_field_map, struct_field_types, func_sigs);
                 struct_defs.push_str(&inner.0); defs_str.push_str(&inner.1); main_functions.push_str(&inner.2);
                 defined.extend(inner.3);
                 break;
@@ -2285,7 +2380,8 @@ pub fn build_ir(defs: &[Def], func_sigs: &HashMap<String, crate::codegen::FuncSi
     CLOSURE_THUNK_ID.store(0, Ordering::Relaxed);
     let struct_types = collect_struct_types(defs);
     let struct_field_map = build_struct_field_map(defs);
-    let (struct_defs, defs_str, main_functions, defined) = generate_with_scope(defs, None, &struct_field_map, func_sigs);
+    let struct_field_types = build_struct_field_types(defs);
+    let (struct_defs, defs_str, main_functions, defined) = generate_with_scope(defs, None, &struct_field_map, &struct_field_types, func_sigs);
 
     // Collect user DCFuncUnsafe definitions for libhost.c generation
     let mut host_defs: Vec<crate::codegen::mvm::HostDef> = Vec::new();

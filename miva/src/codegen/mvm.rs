@@ -311,6 +311,14 @@ impl MvmCodegen {
                         .collect();
                     self.struct_field_indices.insert(name.clone(), indexed);
                 }
+                Def::DShape { name, fields, .. } => {
+                    // Shapes are treated similarly to structs for runtime field access
+                    let indexed: Vec<(String, usize)> = fields.iter()
+                        .enumerate()
+                        .map(|(i, f)| (f.name.clone(), i))
+                        .collect();
+                    self.struct_field_indices.insert(name.clone(), indexed);
+                }
                 Def::DEnum { name, variants, .. } => {
                     let indexed: Vec<(String, usize)> = variants.iter()
                         .enumerate()
@@ -1367,9 +1375,28 @@ impl MvmCodegen {
     fn find_field_list(&self, expr: &Expr) -> Option<&Vec<(String, usize)>> {
         match expr {
             Expr::EVar { name, .. } | Expr::EMove { name, .. } => {
+                // Check local variable types first
+                if let Some(typ) = self.var_types.get(name) {
+                    match typ {
+                        Typ::TStruct { name: struct_name, .. } => {
+                            return self.struct_field_indices.get(struct_name);
+                        }
+                        Typ::TShape { name: shape_name } => {
+                            return self.struct_field_indices.get(shape_name);
+                        }
+                        _ => {}
+                    }
+                }
+                // Then check function parameter types
                 if let Some(typ) = self.param_types.get(name) {
-                    if let Typ::TStruct { name: struct_name, .. } = typ {
-                        return self.struct_field_indices.get(struct_name);
+                    match typ {
+                        Typ::TStruct { name: struct_name, .. } => {
+                            return self.struct_field_indices.get(struct_name);
+                        }
+                        Typ::TShape { name: shape_name } => {
+                            return self.struct_field_indices.get(shape_name);
+                        }
+                        _ => {}
                     }
                 }
                 None

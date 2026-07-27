@@ -519,8 +519,17 @@ fn lower_def(ctx: &mut IrContext, def: &Def) -> IrDef {
         Def::DEnum { name, variants, type_params, .. } => {
             IrDef::Enum { name: name.clone(), type_params: type_params.clone(), variants: variants.clone() }
         }
-        // Shape definitions produce no runtime code
-        Def::DShape { .. } => IrDef::Export("".to_string()),
+        // Shape definitions are treated as regular struct definitions for runtime representation.
+        Def::DShape {
+            name,
+            fields,
+            type_params,
+            ..
+        } => IrDef::Struct {
+            name: name.clone(),
+            type_params: type_params.clone(),
+            fields: fields.clone(),
+        },
         Def::DFunc { name, type_params, params, returns, body, is_async, .. } if *is_async => {
             let (body_stmts, body_result) = lower_block(ctx, body);
             IrDef::AsyncFunc {

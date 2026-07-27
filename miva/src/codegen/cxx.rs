@@ -1085,8 +1085,12 @@ fn cxx_def(def: &Def, depth: usize) -> String {
             type_params,
             ..
         } => cxx_enum_def(name, type_params, variants, ind, inner),
-        // Shape definitions produce no runtime code — they are compile-time only.
-        Def::DShape { .. } => String::new(),
+        Def::DShape {
+            name,
+            fields,
+            type_params,
+            ..
+        } => cxx_struct_def(name, type_params, fields, ind, inner),
         Def::DFunc {
             name,
             type_params,

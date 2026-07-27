@@ -244,6 +244,8 @@ fn builtin_return_typ(name: &str) -> Option<Typ> {
         "yaml_number" => Some(Typ::TFloat64),
         "yaml_string" | "yaml_stringify" => Some(Typ::TString),
         "yaml_free" => Some(Typ::TNull),
+        "mutex_new" => Some(Typ::TPtrAny),
+        "mutex_lock" | "mutex_unlock" | "mutex_free" => Some(Typ::TNull),
         _ => None,
     }
 }
