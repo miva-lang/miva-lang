@@ -1899,9 +1899,9 @@ This generates C++ `operator+`, `operator-`, `operator*`, `operator/`, `operator
 
 ---
 
-## Drop System (Destructors)
+## Drop System
 
-A struct can register a destructor with the same `impl` syntax as operator overloading. The registered function runs automatically when a value of that type goes out of scope.
+A struct can register a drop function with the same `impl` syntax as operator overloading. The registered function runs automatically when a value of that type goes out of scope.
 
 ```miva
 File = struct {
