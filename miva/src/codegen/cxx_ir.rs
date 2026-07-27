@@ -470,18 +470,29 @@ fn lower_stmt(ctx: &mut IrContext, stmt: &Stmt) -> Vec<IrStmt> {
         Stmt::SExpr { expr, .. } => {
             match expr.as_ref() {
                 Expr::EWhile { cond, body, .. } => {
-                    let (body_stmts, _) = lower_block(ctx, body);
+                    let (mut body_stmts, body_result) = lower_block(ctx, body);
+                    // In statement position the loop yields no value, so a
+                    // trailing expression is still executed for its effects.
+                    if let Some(r) = body_result {
+                        body_stmts.push(IrStmt::Expr(r));
+                    }
                     vec![IrStmt::While {
                         cond: lower_expr(ctx, cond),
                         body: body_stmts,
                     }]
                 }
                 Expr::ELoop { body, .. } => {
-                    let (body_stmts, _) = lower_block(ctx, body);
+                    let (mut body_stmts, body_result) = lower_block(ctx, body);
+                    if let Some(r) = body_result {
+                        body_stmts.push(IrStmt::Expr(r));
+                    }
                     vec![IrStmt::Loop { body: body_stmts }]
                 }
                 Expr::EFor { var, range, body, .. } => {
-                    let (body_stmts, _) = lower_block(ctx, body);
+                    let (mut body_stmts, body_result) = lower_block(ctx, body);
+                    if let Some(r) = body_result {
+                        body_stmts.push(IrStmt::Expr(r));
+                    }
                     vec![IrStmt::For {
                         var: var.clone(),
                         range: lower_expr(ctx, range),
@@ -980,28 +991,30 @@ fn emit_block(stmts: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expe
 
 fn emit_while(cond: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
     let cond_str = emit_expr(cond, depth, expected_type);
-    let body_str = if body.is_empty() {
+    let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
+    // A trailing expression runs each iteration for its effects; `return`
+    // here would exit the wrapping lambda after the first iteration.
+    let result_str = match result {
+        Some(e) => format!("{}{};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
+        None => String::new(),
+    };
+    let body_str = if stmt_strs.is_empty() && result_str.is_empty() {
         String::new()
     } else {
-        let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
-        let result_str = match result {
-            Some(e) => format!("{}return {};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
-            None => String::new(),
-        };
         format!("{{\n{}{}\n{}}}", stmt_strs, result_str, indent_str(depth))
     };
     format!("([&]() {{ while ({}) {{ {} ;}}}})()", cond_str, body_str)
 }
 
 fn emit_loop(body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
-    let body_str = if body.is_empty() {
+    let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
+    let result_str = match result {
+        Some(e) => format!("{}return {};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
+        None => String::new(),
+    };
+    let body_str = if stmt_strs.is_empty() && result_str.is_empty() {
         String::new()
     } else {
-        let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
-        let result_str = match result {
-            Some(e) => format!("{}return {};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
-            None => String::new(),
-        };
         format!("{{\n{}{}\n{}}}", stmt_strs, result_str, indent_str(depth))
     };
     format!("([&]() {{ for (;;) {{ {} ;}}}})()", body_str)
@@ -1009,14 +1022,14 @@ fn emit_loop(body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expect
 
 fn emit_for(var: &str, range: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
     let range_str = emit_expr(range, depth, expected_type);
-    let body_str = if body.is_empty() {
+    let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
+    let result_str = match result {
+        Some(e) => format!("{}{};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
+        None => String::new(),
+    };
+    let body_str = if stmt_strs.is_empty() && result_str.is_empty() {
         String::new()
     } else {
-        let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
-        let result_str = match result {
-            Some(e) => format!("{}return {};\n", indent_str(depth + 1), emit_expr(e, depth + 1, expected_type)),
-            None => String::new(),
-        };
         format!("{{\n{}{}\n{}}}", stmt_strs, result_str, indent_str(depth))
     };
     format!(
@@ -2137,4 +2150,99 @@ using namespace std;
     );
     let test = generate_test_ir(&ir_defs);
     [program, header_content, test]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loc() -> Loc {
+        Loc { line: 1, col: 1 }
+    }
+
+    fn call_stmt(name: &str, arg: &str) -> Stmt {
+        Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(Expr::ECall {
+                loc: loc(),
+                name: name.to_string(),
+                type_args: vec![],
+                args: vec![Expr::EVar {
+                    loc: loc(),
+                    name: arg.to_string(),
+                }],
+            }),
+        }
+    }
+
+    fn unit_fn(name: &str, stmts: Vec<Stmt>) -> Def {
+        Def::DFunc {
+            loc: loc(),
+            name: name.to_string(),
+            type_params: vec![],
+            params: vec![],
+            returns: None,
+            body: Box::new(Expr::EBlock {
+                loc: loc(),
+                stmts,
+                result: None,
+            }),
+            safety: Safety::Safe,
+            is_async: false,
+            type_bounds: vec![],
+        }
+    }
+
+    #[test]
+    fn test_stmt_for_keeps_trailing_call_in_body() {
+        let for_stmt = Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(Expr::EFor {
+                loc: loc(),
+                var: "e".to_string(),
+                range: Box::new(Expr::EVar {
+                    loc: loc(),
+                    name: "arr".to_string(),
+                }),
+                body: Box::new(Expr::EBlock {
+                    loc: loc(),
+                    stmts: vec![call_stmt("file_close", "e")],
+                    result: None,
+                }),
+            }),
+        };
+        let defs = vec![unit_fn("f", vec![for_stmt])];
+        let [program, _, _] = build_ir(&defs);
+        assert!(
+            program.contains("file_close"),
+            "trailing call in for body was dropped:\n{}",
+            program
+        );
+    }
+
+    #[test]
+    fn test_stmt_while_keeps_trailing_call_in_body() {
+        let while_stmt = Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(Expr::EWhile {
+                loc: loc(),
+                cond: Box::new(Expr::EBool {
+                    loc: loc(),
+                    value: true,
+                }),
+                body: Box::new(Expr::EBlock {
+                    loc: loc(),
+                    stmts: vec![call_stmt("file_close", "e")],
+                    result: None,
+                }),
+            }),
+        };
+        let defs = vec![unit_fn("f", vec![while_stmt])];
+        let [program, _, _] = build_ir(&defs);
+        assert!(
+            program.contains("file_close"),
+            "trailing call in while body was dropped:\n{}",
+            program
+        );
+    }
 }
