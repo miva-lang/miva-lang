@@ -1068,14 +1068,23 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
             "0".to_string()
         }
         Expr::EFor { var, range, body: for_body, .. } => {
-            // Extract the count from `range(n)` — the range builtin returns void
-            // in LLVM (writes through an output pointer), so we evaluate the
-            // argument of range() directly as the loop bound.
-            let range_count = match range.as_ref() {
+            // `range(n)` loops n times with the loop var as the counter — the
+            // range builtin returns void in LLVM, so its argument is used
+            // directly as the loop bound. Any other range value is an array
+            // (`{len, e0, e1, ...}` heap block, see EArrayLit): loop over the
+            // indices and load each element into the loop var.
+            let (bound, arr_ptr) = match range.as_ref() {
                 Expr::ECall { name, args, .. } if name == "range" && args.len() == 1 => {
-                    gen_expr(&args[0], ctx, body)
+                    (gen_expr(&args[0], ctx, body), None)
                 }
-                _ => gen_expr(range, ctx, body),
+                _ => {
+                    let arr = gen_expr(range, ctx, body);
+                    let ptr = ctx.gen_tmp("farr");
+                    body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr, arr));
+                    let len = ctx.gen_tmp("flen");
+                    body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), len, ptr));
+                    (len, Some(ptr))
+                }
             };
             let label_cond = ctx.gen_label("fcond"); let label_body = ctx.gen_label("fbody"); let label_end = ctx.gen_label("fend");
             let var_reloads_before = ctx.var_reloads.clone();
@@ -1083,24 +1092,51 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
             // Declare the loop variable (creates an alloca address)
             let (addr, _reload) = ctx.declare_var(var);
             body.push_str(&format!("  %{} = alloca i64, align 8\n", addr));
+            // The counter is the loop var itself for range(n); arrays keep the
+            // index in a separate slot so the loop var can hold the element.
+            let counter_addr = if arr_ptr.is_some() {
+                let c = format!("fidx.{}", ctx.tmp_counter);
+                ctx.tmp_counter += 1;
+                body.push_str(&format!("  %{} = alloca i64, align 8\n", c));
+                c
+            } else {
+                addr.clone()
+            };
             // Initialize loop counter to 0
-            body.push_str(&format!("  store i64 0, ptr %{}, align 8\n", addr));
+            body.push_str(&format!("  store i64 0, ptr %{}, align 8\n", counter_addr));
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_cond));
             body.push_str(&format!("{}:\n", label_cond));
             // Reload loop counter
-            let reload_name = format!("{}.fv.{}", var, ctx.tmp_counter);
+            let counter_name = format!("{}.fv.{}", var, ctx.tmp_counter);
             ctx.tmp_counter += 1;
-            body.push_str(&format!("  %{} = load i64, ptr %{}, align 8\n", reload_name, addr));
-            ctx.var_reloads.insert(var.clone(), reload_name.clone());
+            body.push_str(&format!("  %{} = load i64, ptr %{}, align 8\n", counter_name, counter_addr));
             let cmp = ctx.gen_tmp("fc");
-            body.push_str(&format!("{}{} = icmp slt i64 %{}, {}\n", ctx.indent_str(), cmp, reload_name, range_count));
+            body.push_str(&format!("{}{} = icmp slt i64 %{}, {}\n", ctx.indent_str(), cmp, counter_name, bound));
             body.push_str(&format!("{}br i1 {}, label %{}, label %{}\n", ctx.indent_str(), cmp, label_body, label_end));
-            body.push_str(&format!("{}:\n", label_body)); ctx.indent += 1; gen_expr(for_body, ctx, body); ctx.indent -= 1;
+            body.push_str(&format!("{}:\n", label_body)); ctx.indent += 1;
+            let reload_name = if let Some(ptr) = &arr_ptr {
+                // Load the element at counter+1 into the loop var.
+                let off = ctx.gen_tmp("feo");
+                body.push_str(&format!("{}{} = add i64 %{}, 1\n", ctx.indent_str(), off, counter_name));
+                let gep = ctx.gen_tmp("feg");
+                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr, off));
+                let elem = ctx.gen_tmp("fel");
+                body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), elem, gep));
+                body.push_str(&format!("{}store i64 {}, ptr %{}, align 8\n", ctx.indent_str(), elem, addr));
+                let r = format!("{}.fv.{}", var, ctx.tmp_counter);
+                ctx.tmp_counter += 1;
+                body.push_str(&format!("{}%{} = load i64, ptr %{}, align 8\n", ctx.indent_str(), r, addr));
+                r
+            } else {
+                counter_name.clone()
+            };
+            ctx.var_reloads.insert(var.clone(), reload_name);
+            gen_expr(for_body, ctx, body); ctx.indent -= 1;
             // Increment and store loop counter back
             let next_name = format!("{}.fn.{}", var, ctx.tmp_counter);
             ctx.tmp_counter += 1;
-            body.push_str(&format!("  %{} = add i64 %{}, 1\n", next_name, reload_name));
-            body.push_str(&format!("  store i64 %{}, ptr %{}, align 8\n", next_name, addr));
+            body.push_str(&format!("  %{} = add i64 %{}, 1\n", next_name, counter_name));
+            body.push_str(&format!("  store i64 %{}, ptr %{}, align 8\n", next_name, counter_addr));
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_cond));
             body.push_str(&format!("{}:\n", label_end));
             // Loop variable is out of scope after the loop
@@ -1132,8 +1168,45 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
             }
         }
         Expr::EBlock { stmts, result, .. } => {
+            // Names `let`-declared directly in this block are scoped to it:
+            // snapshot their outer bindings and restore them afterwards so an
+            // inner shadowing `let` (e.g. from macro expansion) cannot clobber
+            // an outer variable of the same name.
+            let declared: Vec<String> = stmts
+                .iter()
+                .filter_map(|s| match s {
+                    Stmt::SLet { name, .. } | Stmt::SLetTyped { name, .. } => Some(name.clone()),
+                    _ => None,
+                })
+                .collect();
+            let saved: Vec<(String, Option<String>, Option<String>, Option<Typ>)> = declared
+                .iter()
+                .map(|n| {
+                    (
+                        n.clone(),
+                        ctx.var_addrs.get(n).cloned(),
+                        ctx.var_reloads.get(n).cloned(),
+                        ctx.var_types.get(n).cloned(),
+                    )
+                })
+                .collect();
             for stmt in stmts { gen_stmt(stmt, ctx, body); }
-            match result { Some(r) => gen_expr(r, ctx, body), None => "0".to_string() }
+            let out = match result { Some(r) => gen_expr(r, ctx, body), None => "0".to_string() };
+            for (name, addr, reload, typ) in saved {
+                match addr {
+                    Some(a) => { ctx.var_addrs.insert(name.clone(), a); }
+                    None => { ctx.var_addrs.remove(&name); }
+                }
+                match reload {
+                    Some(r) => { ctx.var_reloads.insert(name.clone(), r); }
+                    None => { ctx.var_reloads.remove(&name); }
+                }
+                match typ {
+                    Some(t) => { ctx.var_types.insert(name.clone(), t); }
+                    None => { ctx.var_types.remove(&name); }
+                }
+            }
+            out
         }
         Expr::EStructLit { name: struct_name, fields, .. } => {
             let tmp = ctx.gen_tmp("st");
@@ -1360,7 +1433,23 @@ fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> String {
             }
             gen_expr(&chain, ctx, body)
         }
-        Expr::EArrayLit { .. } => "0".to_string(),
+        Expr::EArrayLit { values, .. } => {
+            // Arrays are `{len, e0, e1, ...}` heap blocks of i64 slots,
+            // mirroring the enum/struct representation in this backend.
+            let vals: Vec<String> = values.iter().map(|v| gen_expr(v, ctx, body)).collect();
+            let tmp = ctx.gen_tmp("arr");
+            let size = (values.len() + 1) * 8;
+            body.push_str(&format!("{}{} = call ptr @miva_alloc(i64 {})\n", ctx.indent_str(), tmp, size));
+            body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), values.len(), tmp));
+            for (i, v) in vals.iter().enumerate() {
+                let gep = ctx.gen_tmp("ae");
+                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, tmp, i + 1));
+                body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), v, gep));
+            }
+            let int_tmp = ctx.gen_tmp("arri");
+            body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+            int_tmp
+        }
         Expr::EAddr { expr: aexpr, .. } => gen_expr(aexpr, ctx, body),
         Expr::EDeref { expr: dexpr, .. } => {
             // Pointer values are modelled as i64 addresses in the LLVM backend,
@@ -2438,4 +2527,88 @@ pub fn build_ir(defs: &[Def], func_sigs: &HashMap<String, crate::codegen::FuncSi
     let bridge = generate_bridge(defs);
 
     crate::codegen::GeneratedOutput { program: program.into_bytes(), header: bridge, test: test_ir, extension: "ll", host_defs }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loc() -> Loc {
+        Loc { line: 1, col: 1 }
+    }
+
+    fn int(v: i64) -> Expr {
+        Expr::EInt { loc: loc(), value: v }
+    }
+
+    #[test]
+    fn test_inner_block_let_does_not_clobber_outer_binding() {
+        let mut ctx = LlvmCtx::new();
+        let mut body = String::new();
+        gen_stmt(
+            &Stmt::SLet { loc: loc(), mutable: false, name: "s".into(), expr: Box::new(int(1)) },
+            &mut ctx,
+            &mut body,
+        );
+        let outer = ctx.get_var_reload("s");
+
+        let inner_block = Expr::EBlock {
+            loc: loc(),
+            stmts: vec![
+                Stmt::SLet { loc: loc(), mutable: true, name: "s".into(), expr: Box::new(int(2)) },
+                Stmt::SAssign { loc: loc(), name: "s".into(), expr: Box::new(int(3)) },
+            ],
+            result: None,
+        };
+        gen_stmt(
+            &Stmt::SExpr { loc: loc(), expr: Box::new(inner_block) },
+            &mut ctx,
+            &mut body,
+        );
+
+        assert_eq!(
+            ctx.get_var_reload("s"),
+            outer,
+            "a let inside a nested block must not clobber the outer binding"
+        );
+    }
+
+    #[test]
+    fn test_for_over_array_literal_iterates_elements() {
+        let mut ctx = LlvmCtx::new();
+        let mut body = String::new();
+        gen_stmt(
+            &Stmt::SLet {
+                loc: loc(),
+                mutable: false,
+                name: "arr".into(),
+                expr: Box::new(Expr::EArrayLit { loc: loc(), values: vec![int(7), int(8)] }),
+            },
+            &mut ctx,
+            &mut body,
+        );
+        let for_expr = Expr::EFor {
+            loc: loc(),
+            var: "x".into(),
+            range: Box::new(Expr::EVar { loc: loc(), name: "arr".into() }),
+            body: Box::new(Expr::EBlock { loc: loc(), stmts: vec![], result: None }),
+        };
+        gen_expr(&for_expr, &mut ctx, &mut body);
+
+        assert!(
+            body.contains("call ptr @miva_alloc(i64 24)"),
+            "array literal should heap-allocate len + 2 element slots:\n{}",
+            body
+        );
+        assert!(
+            body.contains("store i64 2, ptr"),
+            "array literal should store its length at slot 0:\n{}",
+            body
+        );
+        assert!(
+            body.contains("%fel"),
+            "for-over-array should load each element into the loop var:\n{}",
+            body
+        );
+    }
 }
