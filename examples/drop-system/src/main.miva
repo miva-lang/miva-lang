@@ -71,6 +71,21 @@ wrapped = () => {
   printlns!("wrapped end");
 }
 
+Slot = enum {
+  Full(File),
+  Nothing,
+}
+
+enumy = () => {
+  let s Slot = Slot.Full(struct File { id = 10 });
+  printlns!("enumy end");
+}
+
+arrayed = () => {
+  let arr [File] = [struct File { id = 11 }, struct File { id = 12 }];
+  printlns!("arrayed end");
+}
+
 main = () => {
   printlns!("start");
   let a File = struct File { id = 1 };
@@ -87,5 +102,7 @@ main = () => {
   branchy(true);
   nested();
   wrapped();
+  enumy();
+  arrayed();
   printlns!("end");
 }

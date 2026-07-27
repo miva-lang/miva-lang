@@ -30,7 +30,158 @@ struct Context {
 }
 
 fn is_droppable_typ(droppable: &HashSet<String>, t: &Typ) -> bool {
-    matches!(t, Typ::TStruct { name, .. } if droppable.contains(name))
+    match t {
+        Typ::TStruct { name, .. } => droppable.contains(name),
+        Typ::TArray { of } => is_droppable_typ(droppable, of),
+        _ => false,
+    }
+}
+
+fn droppable_typ_name(t: &Typ) -> String {
+    match t {
+        Typ::TStruct { name, .. } => name.clone(),
+        Typ::TArray { of } => format!("[{}]", droppable_typ_name(of)),
+        _ => "?".to_string(),
+    }
+}
+
+fn ban_generic_arg(t: &Typ, droppable: &HashSet<String>, loc: &Loc, what: &str, errs: &mut Vec<Error>) {
+    if is_droppable_typ(droppable, t) {
+        errs.push(Error::new(
+            "E0036",
+            loc,
+            &format!(
+                "droppable type '{}' cannot be used as a {} argument in v1",
+                droppable_typ_name(t),
+                what
+            ),
+        ));
+    }
+    ban_droppable_generic_args(t, droppable, loc, errs);
+}
+
+fn ban_droppable_generic_args(t: &Typ, droppable: &HashSet<String>, loc: &Loc, errs: &mut Vec<Error>) {
+    match t {
+        Typ::TStruct { type_args, .. } => {
+            for ta in type_args {
+                ban_generic_arg(ta, droppable, loc, "generic", errs);
+            }
+        }
+        Typ::TFuture { of } => ban_generic_arg(of, droppable, loc, "future", errs),
+        Typ::TBox { of } => ban_generic_arg(of, droppable, loc, "box", errs),
+        Typ::TArray { of } | Typ::TPtr { to: of } => {
+            ban_droppable_generic_args(of, droppable, loc, errs)
+        }
+        _ => {}
+    }
+}
+
+fn ban_check_expr(expr: &Expr, droppable: &HashSet<String>, errs: &mut Vec<Error>) {
+    match expr {
+        Expr::ECall { loc, type_args, args, .. } => {
+            for ta in type_args {
+                ban_generic_arg(ta, droppable, loc, "generic", errs);
+            }
+            for a in args {
+                ban_check_expr(a, droppable, errs);
+            }
+        }
+        Expr::EMethodCall { loc, type_args, expr, args, .. } => {
+            for ta in type_args {
+                ban_generic_arg(ta, droppable, loc, "generic", errs);
+            }
+            ban_check_expr(expr, droppable, errs);
+            for a in args {
+                ban_check_expr(a, droppable, errs);
+            }
+        }
+        Expr::EStructLit { loc, type_args, fields, .. } => {
+            for ta in type_args {
+                ban_generic_arg(ta, droppable, loc, "generic", errs);
+            }
+            for f in fields {
+                ban_check_expr(&f.value, droppable, errs);
+            }
+        }
+        Expr::ECast { loc, to, expr, .. } => {
+            ban_droppable_generic_args(to, droppable, loc, errs);
+            ban_check_expr(expr, droppable, errs);
+        }
+        Expr::EMacro { args, .. } => {
+            for a in args {
+                ban_check_expr(a, droppable, errs);
+            }
+        }
+        Expr::EBlock { stmts, result, .. } => {
+            for s in stmts {
+                ban_check_stmt(s, droppable, errs);
+            }
+            if let Some(r) = result {
+                ban_check_expr(r, droppable, errs);
+            }
+        }
+        Expr::EIf { cond, then, else_, .. } => {
+            ban_check_expr(cond, droppable, errs);
+            ban_check_expr(then, droppable, errs);
+            if let Some(e) = else_ {
+                ban_check_expr(e, droppable, errs);
+            }
+        }
+        Expr::EChoose { var, cases, otherwise, .. } => {
+            ban_check_expr(var, droppable, errs);
+            for c in cases {
+                ban_check_expr(&c.when, droppable, errs);
+                if let Some(g) = &c.guard {
+                    ban_check_expr(g, droppable, errs);
+                }
+                ban_check_expr(&c.then, droppable, errs);
+            }
+            if let Some(o) = otherwise {
+                ban_check_expr(o, droppable, errs);
+            }
+        }
+        Expr::EWhile { cond, body, .. } => {
+            ban_check_expr(cond, droppable, errs);
+            ban_check_expr(body, droppable, errs);
+        }
+        Expr::ELoop { body, .. } => ban_check_expr(body, droppable, errs),
+        Expr::EFor { range, body, .. } => {
+            ban_check_expr(range, droppable, errs);
+            ban_check_expr(body, droppable, errs);
+        }
+        Expr::EBinOp { left, right, .. } => {
+            ban_check_expr(left, droppable, errs);
+            ban_check_expr(right, droppable, errs);
+        }
+        Expr::EFieldAccess { expr, .. }
+        | Expr::EAddr { expr, .. }
+        | Expr::EDeref { expr, .. } => ban_check_expr(expr, droppable, errs),
+        Expr::EArrayLit { values, .. } => {
+            for v in values {
+                ban_check_expr(v, droppable, errs);
+            }
+        }
+        Expr::ELambda { body, .. } => ban_check_expr(body, droppable, errs),
+        _ => {}
+    }
+}
+
+fn ban_check_stmt(stmt: &Stmt, droppable: &HashSet<String>, errs: &mut Vec<Error>) {
+    match stmt {
+        Stmt::SLetTyped { loc, typ, expr, .. } => {
+            ban_droppable_generic_args(typ, droppable, loc, errs);
+            ban_check_expr(expr, droppable, errs);
+        }
+        Stmt::SLet { expr, .. } | Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
+            ban_check_expr(expr, droppable, errs)
+        }
+        Stmt::SFieldAssign { target, expr, .. } => {
+            ban_check_expr(target, droppable, errs);
+            ban_check_expr(expr, droppable, errs);
+        }
+        Stmt::SReturn { expr, .. } => ban_check_expr(expr, droppable, errs),
+        _ => {}
+    }
 }
 
 fn is_droppable_var(ctx: &Context, name: &str) -> bool {
@@ -714,8 +865,19 @@ pub fn check_program_with(
             _ => None,
         })
         .collect();
-    // Droppability is infectious: a struct containing a droppable field (at
-    // any nesting depth) is itself droppable, even without its own op_drop.
+    // Droppability is infectious: a struct containing a droppable field or an
+    // enum carrying a droppable payload (at any nesting depth) is itself
+    // droppable, even without its own op_drop.
+    let enum_payloads: HashMap<String, Vec<Typ>> = defs
+        .iter()
+        .filter_map(|d| match d {
+            Def::DEnum { name, variants, .. } => Some((
+                name.clone(),
+                variants.iter().flat_map(|v| v.payload.clone()).collect(),
+            )),
+            _ => None,
+        })
+        .collect();
     loop {
         let before = droppable.len();
         for (name, fields) in &types {
@@ -725,8 +887,54 @@ pub fn check_program_with(
                 droppable.insert(name.clone());
             }
         }
+        for (name, payloads) in &enum_payloads {
+            if !droppable.contains(name)
+                && payloads.iter().any(|t| is_droppable_typ(&droppable, t))
+            {
+                droppable.insert(name.clone());
+            }
+        }
         if droppable.len() == before {
             break;
+        }
+    }
+
+    // v1 generic-argument ban (E0036): droppable types may not appear as
+    // generic arguments (generic structs, future[T], box<T>).
+    if !droppable.is_empty() {
+        for def in defs {
+            match def {
+                Def::DFunc {
+                    loc,
+                    params,
+                    returns,
+                    body,
+                    ..
+                } => {
+                    for p in params {
+                        let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
+                        ban_droppable_generic_args(typ, &droppable, loc, &mut errs);
+                    }
+                    if let Some(r) = returns {
+                        ban_droppable_generic_args(r, &droppable, loc, &mut errs);
+                    }
+                    ban_check_expr(body, &droppable, &mut errs);
+                }
+                Def::DTest { body, .. } => ban_check_expr(body, &droppable, &mut errs),
+                Def::DStruct { loc, fields, .. } => {
+                    for f in fields {
+                        ban_droppable_generic_args(&f.typ, &droppable, loc, &mut errs);
+                    }
+                }
+                Def::DEnum { loc, variants, .. } => {
+                    for v in variants {
+                        for t in &v.payload {
+                            ban_droppable_generic_args(t, &droppable, loc, &mut errs);
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -2700,5 +2908,205 @@ mod tests {
         ));
         let errs = check_program(&defs);
         assert!(errs.iter().any(|e| e.code == "E0001"), "nested glue struct must be move-only, got: {:?}", errs);
+    }
+
+    // ── enum/array infection + generic-argument ban ─────────────────
+
+    fn slot_enum() -> Def {
+        Def::DEnum {
+            loc: loc(),
+            name: "Slot".to_string(),
+            type_params: vec![],
+            variants: vec![
+                EnumVariant { name: "Full".to_string(), payload: vec![file_typ()] },
+                EnumVariant { name: "Empty".to_string(), payload: vec![] },
+            ],
+        }
+    }
+
+    fn slot_typ() -> Typ {
+        Typ::TStruct { name: "Slot".to_string(), fields: vec![], type_args: vec![] }
+    }
+
+    #[test]
+    fn test_enum_with_droppable_payload_is_move_only() {
+        let mut defs = drop_defs();
+        defs.push(slot_enum());
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "s".to_string(),
+                        typ: slot_typ(),
+                        expr: Box::new(Expr::ECall {
+                            loc: loc(),
+                            name: "Slot.Full".to_string(),
+                            type_args: vec![],
+                            args: vec![Expr::EMove { loc: loc(), name: "a".to_string() }],
+                        }),
+                    },
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "s2".to_string(),
+                        typ: slot_typ(),
+                        expr: Box::new(Expr::EVar { loc: loc(), name: "s".to_string() }),
+                    },
+                    use_var("s"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "enum with droppable payload must be move-only, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_array_of_droppable_is_move_only() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    let_file("a"),
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "arr".to_string(),
+                        typ: Typ::TArray { of: Box::new(file_typ()) },
+                        expr: Box::new(Expr::EArrayLit {
+                            loc: loc(),
+                            values: vec![Expr::EMove { loc: loc(), name: "a".to_string() }],
+                        }),
+                    },
+                    Stmt::SLetTyped {
+                        loc: loc(),
+                        name: "arr2".to_string(),
+                        typ: Typ::TArray { of: Box::new(file_typ()) },
+                        expr: Box::new(Expr::EVar { loc: loc(), name: "arr".to_string() }),
+                    },
+                    use_var("arr"),
+                ],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0001"), "array of droppable must be move-only, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_future_of_droppable_return_is_e0036() {
+        let mut defs = drop_defs();
+        defs.push(Def::DFunc {
+            loc: loc(),
+            name: "task".to_string(),
+            type_params: vec![],
+            params: vec![],
+            returns: Some(Typ::TFuture { of: Box::new(file_typ()) }),
+            body: Box::new(Expr::EVoid { loc: loc() }),
+            safety: Safety::Safe,
+            is_async: true,
+            type_bounds: vec![],
+        });
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0036"), "future[File] must be rejected, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_future_of_non_droppable_return_is_ok() {
+        let mut defs = drop_defs();
+        defs.push(Def::DFunc {
+            loc: loc(),
+            name: "task".to_string(),
+            type_params: vec![],
+            params: vec![],
+            returns: Some(Typ::TFuture { of: Box::new(Typ::TInt) }),
+            body: Box::new(Expr::EVoid { loc: loc() }),
+            safety: Safety::Safe,
+            is_async: true,
+            type_bounds: vec![],
+        });
+        let errs = check_program(&defs);
+        assert!(!errs.iter().any(|e| e.code == "E0036"), "future[int] must be fine, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_in_generic_struct_type_args_is_e0036() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![Stmt::SLetTyped {
+                    loc: loc(),
+                    name: "v".to_string(),
+                    typ: Typ::TStruct {
+                        name: "Vec".to_string(),
+                        fields: vec![],
+                        type_args: vec![file_typ()],
+                    },
+                    expr: Box::new(Expr::EVoid { loc: loc() }),
+                }],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0036"), "Vec[File] must be rejected, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_in_call_type_args_is_e0036() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![Stmt::SExpr {
+                    loc: loc(),
+                    expr: Box::new(Expr::ECall {
+                        loc: loc(),
+                        name: "identity".to_string(),
+                        type_args: vec![file_typ()],
+                        args: vec![],
+                    }),
+                }],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0036"), "identity[File]() must be rejected, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_droppable_in_box_is_e0036() {
+        let mut defs = drop_defs();
+        defs.push(make_func(
+            "main",
+            vec![],
+            Expr::EBlock {
+                loc: loc(),
+                stmts: vec![Stmt::SLetTyped {
+                    loc: loc(),
+                    name: "b".to_string(),
+                    typ: Typ::TBox { of: Box::new(file_typ()) },
+                    expr: Box::new(Expr::EVoid { loc: loc() }),
+                }],
+                result: None,
+            },
+            Safety::Safe,
+        ));
+        let errs = check_program(&defs);
+        assert!(errs.iter().any(|e| e.code == "E0036"), "box<File> must be rejected, got: {:?}", errs);
     }
 }

@@ -25,21 +25,36 @@ pub fn desugar_drops(defs: &mut [Def]) {
         return;
     }
     let mut struct_fields: HashMap<String, Vec<FieldDef>> = HashMap::new();
+    let mut enum_variants: HashMap<String, Vec<EnumVariant>> = HashMap::new();
     for def in defs.iter() {
-        if let Def::DStruct { name, fields, .. } = def {
-            struct_fields.insert(name.clone(), fields.clone());
+        match def {
+            Def::DStruct { name, fields, .. } => {
+                struct_fields.insert(name.clone(), fields.clone());
+            }
+            Def::DEnum { name, variants, .. } => {
+                enum_variants.insert(name.clone(), variants.clone());
+            }
+            _ => {}
         }
     }
-    // Droppability is infectious: a struct containing a droppable field (at
-    // any nesting depth) needs drop glue even without its own op_drop.
+    // Droppability is infectious: a struct containing a droppable field or an
+    // enum carrying a droppable payload (at any nesting depth) needs drop
+    // glue even without its own op_drop.
     let mut droppable: HashSet<String> = drop_fns.keys().cloned().collect();
     loop {
         let before = droppable.len();
         for (name, fields) in &struct_fields {
             if !droppable.contains(name)
-                && fields.iter().any(|f| {
-                    matches!(&f.typ, Typ::TStruct { name: fs, .. } if droppable.contains(fs))
-                })
+                && fields.iter().any(|f| typ_droppable(&droppable, &f.typ))
+            {
+                droppable.insert(name.clone());
+            }
+        }
+        for (name, variants) in &enum_variants {
+            if !droppable.contains(name)
+                && variants
+                    .iter()
+                    .any(|v| v.payload.iter().any(|t| typ_droppable(&droppable, t)))
             {
                 droppable.insert(name.clone());
             }
@@ -58,6 +73,7 @@ pub fn desugar_drops(defs: &mut [Def]) {
         drop_fns: &drop_fns,
         fn_returns: &fn_returns,
         struct_fields: &struct_fields,
+        enum_variants: &enum_variants,
         droppable: &droppable,
     };
     for def in defs.iter_mut() {
@@ -67,8 +83,8 @@ pub fn desugar_drops(defs: &mut [Def]) {
                 state.scopes.push(Vec::new());
                 for p in params.iter() {
                     if let Param::POwn { name, typ } = p {
-                        if let Some(sn) = ctx.droppable_struct(typ) {
-                            state.declare(name.clone(), sn);
+                        if let Some(t) = ctx.droppable_typ(typ) {
+                            state.declare(name.clone(), t);
                         }
                     }
                 }
@@ -84,25 +100,53 @@ pub fn desugar_drops(defs: &mut [Def]) {
     }
 }
 
+fn typ_droppable(droppable: &HashSet<String>, t: &Typ) -> bool {
+    match t {
+        Typ::TStruct { name, .. } => droppable.contains(name),
+        Typ::TArray { of } => typ_droppable(droppable, of),
+        _ => false,
+    }
+}
+
 struct Ctx<'a> {
     drop_fns: &'a HashMap<String, String>,
     fn_returns: &'a HashMap<String, Option<Typ>>,
     struct_fields: &'a HashMap<String, Vec<FieldDef>>,
+    enum_variants: &'a HashMap<String, Vec<EnumVariant>>,
     droppable: &'a HashSet<String>,
 }
 
 #[derive(Default)]
 struct State {
-    scopes: Vec<Vec<(String, String)>>,
-    types: HashMap<String, String>,
+    // Scope entries: Some(typ) = tracked droppable binding, None = a
+    // non-droppable binding that shadows an outer name of the same name.
+    scopes: Vec<Vec<(String, Option<Typ>)>>,
+    types: HashMap<String, Typ>,
     moved: HashSet<String>,
     tmp_counter: usize,
 }
 
 impl State {
-    fn declare(&mut self, name: String, struct_name: String) {
-        self.types.insert(name.clone(), struct_name.clone());
-        self.scopes.last_mut().unwrap().push((name, struct_name));
+    fn declare(&mut self, name: String, typ: Typ) {
+        self.types.insert(name.clone(), typ.clone());
+        self.scopes.last_mut().unwrap().push((name, Some(typ)));
+    }
+
+    fn shadow(&mut self, name: String) {
+        self.scopes.last_mut().unwrap().push((name, None));
+    }
+
+    /// True when the innermost visible binding for `name` is a non-droppable
+    /// shadow, so `name` no longer refers to the tracked droppable.
+    fn is_shadowed(&self, name: &str) -> bool {
+        for scope in self.scopes.iter().rev() {
+            for (n, t) in scope.iter().rev() {
+                if n == name {
+                    return t.is_none();
+                }
+            }
+        }
+        false
     }
 
     fn fresh_tmp(&mut self) -> String {
@@ -112,30 +156,59 @@ impl State {
 }
 
 impl<'a> Ctx<'a> {
-    fn droppable_struct(&self, typ: &Typ) -> Option<String> {
-        if let Typ::TStruct { name, .. } = typ {
-            if self.droppable.contains(name) {
-                return Some(name.clone());
-            }
-        }
-        None
+    fn is_droppable(&self, typ: &Typ) -> bool {
+        typ_droppable(self.droppable, typ)
     }
 
-    fn infer_droppable(&self, expr: &Expr, state: &State) -> Option<String> {
+    fn droppable_typ(&self, typ: &Typ) -> Option<Typ> {
+        if self.is_droppable(typ) {
+            Some(typ.clone())
+        } else {
+            None
+        }
+    }
+
+    fn infer_droppable(&self, expr: &Expr, state: &State) -> Option<Typ> {
         match expr {
             Expr::EStructLit { name, .. } => {
                 if self.droppable.contains(name) {
-                    Some(name.clone())
+                    Some(Typ::TStruct {
+                        name: name.clone(),
+                        fields: vec![],
+                        type_args: vec![],
+                    })
                 } else {
                     None
                 }
             }
-            Expr::ECall { name, .. } => match self.fn_returns.get(name) {
-                Some(Some(t)) => self.droppable_struct(t),
-                _ => None,
-            },
+            Expr::ECall { name, .. } => {
+                // Enum constructor `Enum.Variant(...)` of a droppable enum.
+                if let Some((enum_name, _)) = name.rsplit_once('.') {
+                    if self.enum_variants.contains_key(enum_name)
+                        && self.droppable.contains(enum_name)
+                    {
+                        return Some(Typ::TStruct {
+                            name: enum_name.to_string(),
+                            fields: vec![],
+                            type_args: vec![],
+                        });
+                    }
+                }
+                match self.fn_returns.get(name) {
+                    Some(Some(t)) => self.droppable_typ(t),
+                    _ => None,
+                }
+            }
+            Expr::EArrayLit { values, .. } => {
+                let elem = self.infer_droppable(values.first()?, state)?;
+                Some(Typ::TArray { of: Box::new(elem) })
+            }
             Expr::EMove { name, .. } | Expr::EVar { name, .. } | Expr::EClone { name, .. } => {
-                state.types.get(name).cloned()
+                if state.is_shadowed(name) {
+                    None
+                } else {
+                    state.types.get(name).cloned()
+                }
             }
             Expr::EBlock {
                 result: Some(r), ..
@@ -145,36 +218,129 @@ impl<'a> Ctx<'a> {
     }
 
     /// Rust destruction order: the value's own op_drop (if registered) runs
-    /// first, then droppable fields recursively in declaration order.
-    fn emit_glue(&self, loc: &Loc, base: &Expr, struct_name: &str, out: &mut Vec<Stmt>) {
-        if let Some(f) = self.drop_fns.get(struct_name) {
-            out.push(Stmt::SExpr {
-                loc: loc.clone(),
-                expr: Box::new(Expr::ECall {
-                    loc: loc.clone(),
-                    name: f.clone(),
-                    type_args: vec![],
-                    args: vec![base.clone()],
-                }),
-            });
-        }
-        if let Some(fields) = self.struct_fields.get(struct_name) {
-            for fd in fields {
-                if let Typ::TStruct { name: fs, .. } = &fd.typ {
-                    if self.droppable.contains(fs) {
-                        let fa = Expr::EFieldAccess {
+    /// first, then droppable contents recursively — struct fields in
+    /// declaration order, an enum's live variant payload, array elements in
+    /// index order.
+    fn emit_glue(&self, loc: &Loc, base: &Expr, typ: &Typ, state: &mut State, out: &mut Vec<Stmt>) {
+        match typ {
+            Typ::TStruct { name, .. } => {
+                if let Some(variants) = self.enum_variants.get(name) {
+                    self.emit_enum_glue(loc, base, name, variants, state, out);
+                    return;
+                }
+                if let Some(f) = self.drop_fns.get(name) {
+                    out.push(Stmt::SExpr {
+                        loc: loc.clone(),
+                        expr: Box::new(Expr::ECall {
                             loc: loc.clone(),
-                            expr: Box::new(base.clone()),
-                            field: fd.name.clone(),
-                        };
-                        self.emit_glue(loc, &fa, fs, out);
+                            name: f.clone(),
+                            type_args: vec![],
+                            args: vec![base.clone()],
+                        }),
+                    });
+                }
+                if let Some(fields) = self.struct_fields.get(name) {
+                    for fd in fields {
+                        if self.is_droppable(&fd.typ) {
+                            let fa = Expr::EFieldAccess {
+                                loc: loc.clone(),
+                                expr: Box::new(base.clone()),
+                                field: fd.name.clone(),
+                            };
+                            self.emit_glue(loc, &fa, &fd.typ, state, out);
+                        }
                     }
                 }
             }
+            Typ::TArray { of } => {
+                if !self.is_droppable(of) {
+                    return;
+                }
+                let elem = state.fresh_tmp();
+                let mut body = Vec::new();
+                let elem_var = Expr::EVar {
+                    loc: loc.clone(),
+                    name: elem.clone(),
+                };
+                self.emit_glue(loc, &elem_var, of, state, &mut body);
+                out.push(Stmt::SExpr {
+                    loc: loc.clone(),
+                    expr: Box::new(Expr::EFor {
+                        loc: loc.clone(),
+                        var: elem,
+                        range: Box::new(base.clone()),
+                        body: Box::new(Expr::EBlock {
+                            loc: loc.clone(),
+                            stmts: body,
+                            result: None,
+                        }),
+                    }),
+                });
+            }
+            _ => {}
         }
     }
 
-    fn drop_stmts(&self, loc: &Loc, var: &str, struct_name: &str) -> Vec<Stmt> {
+    /// Enums drop only the live variant's payload: emit a `choose` whose
+    /// cases bind each droppable-payload variant and drop its bindings.
+    fn emit_enum_glue(
+        &self,
+        loc: &Loc,
+        base: &Expr,
+        enum_name: &str,
+        variants: &[EnumVariant],
+        state: &mut State,
+        out: &mut Vec<Stmt>,
+    ) {
+        let mut cases = Vec::new();
+        for v in variants {
+            if !v.payload.iter().any(|t| self.is_droppable(t)) {
+                continue;
+            }
+            let bindings: Vec<String> = v.payload.iter().map(|_| state.fresh_tmp()).collect();
+            let mut body = Vec::new();
+            for (b, t) in bindings.iter().zip(&v.payload) {
+                if self.is_droppable(t) {
+                    let bv = Expr::EVar {
+                        loc: loc.clone(),
+                        name: b.clone(),
+                    };
+                    self.emit_glue(loc, &bv, t, state, &mut body);
+                }
+            }
+            cases.push(WhenCase {
+                when: Box::new(Expr::EEnumPattern {
+                    loc: loc.clone(),
+                    enum_name: enum_name.to_string(),
+                    variant: v.name.clone(),
+                    bindings,
+                }),
+                guard: None,
+                then: Box::new(Expr::EBlock {
+                    loc: loc.clone(),
+                    stmts: body,
+                    result: None,
+                }),
+            });
+        }
+        if cases.is_empty() {
+            return;
+        }
+        out.push(Stmt::SExpr {
+            loc: loc.clone(),
+            expr: Box::new(Expr::EChoose {
+                loc: loc.clone(),
+                var: Box::new(base.clone()),
+                cases,
+                // EVoid, not an empty block: the C++ backend deduces branch
+                // types and an empty-block lambda yields `void`, clashing
+                // with the unit type of the drop-call branches.
+                otherwise: Some(Box::new(Expr::EVoid { loc: loc.clone() })),
+            }),
+        });
+    }
+
+    fn drop_stmts(&self, loc: &Loc, var: &str, typ: &Typ, state: &mut State) -> Vec<Stmt> {
         let mut out = Vec::new();
         self.emit_glue(
             loc,
@@ -182,34 +348,35 @@ impl<'a> Ctx<'a> {
                 loc: loc.clone(),
                 name: var.to_string(),
             },
-            struct_name,
+            typ,
+            state,
             &mut out,
         );
         out
     }
 
     /// Live droppables of the innermost scope, in reverse declaration order.
-    fn scope_drops(&self, state: &State, exclude: Option<&str>) -> Vec<(String, String)> {
+    fn scope_drops(&self, state: &State, exclude: Option<&str>) -> Vec<(String, Typ)> {
         state
             .scopes
             .last()
             .unwrap()
             .iter()
             .rev()
+            .filter_map(|(n, t)| t.as_ref().map(|t| (n.clone(), t.clone())))
             .filter(|(n, _)| !state.moved.contains(n) && Some(n.as_str()) != exclude)
-            .cloned()
             .collect()
     }
 
     /// Live droppables of ALL scopes (function exit), innermost first, each reversed.
-    fn all_drops(&self, state: &State, exclude: Option<&str>) -> Vec<(String, String)> {
+    fn all_drops(&self, state: &State, exclude: Option<&str>) -> Vec<(String, Typ)> {
         state
             .scopes
             .iter()
             .rev()
             .flat_map(|s| s.iter().rev())
+            .filter_map(|(n, t)| t.as_ref().map(|t| (n.clone(), t.clone())))
             .filter(|(n, _)| !state.moved.contains(n) && Some(n.as_str()) != exclude)
-            .cloned()
             .collect()
     }
 
@@ -221,9 +388,11 @@ impl<'a> Ctx<'a> {
             }
             self.desugar_stmts(&loc, stmts, result, state);
             let popped = state.scopes.pop().unwrap();
-            for (n, _) in popped {
-                state.types.remove(&n);
-                state.moved.remove(&n);
+            for (n, t) in popped {
+                if t.is_some() {
+                    state.types.remove(&n);
+                    state.moved.remove(&n);
+                }
             }
             if !new_scope {
                 // keep the stack balanced for the caller-seeded scope
@@ -255,17 +424,21 @@ impl<'a> Ctx<'a> {
                     if let Some(sn) = droppable {
                         let _ = loc;
                         state.declare(name, sn);
+                    } else if state.types.contains_key(&name) {
+                        state.shadow(name);
                     }
                 }
                 Stmt::SLetTyped {
                     name, typ, expr, ..
                 } => {
                     self.walk_expr(expr, state);
-                    let droppable = self.droppable_struct(typ);
+                    let droppable = self.droppable_typ(typ);
                     let name = name.clone();
                     out.push(stmt);
                     if let Some(sn) = droppable {
                         state.declare(name, sn);
+                    } else if state.types.contains_key(&name) {
+                        state.shadow(name);
                     }
                 }
                 Stmt::SReturn { loc, expr } => {
@@ -280,7 +453,7 @@ impl<'a> Ctx<'a> {
                         out.push(stmt);
                     } else if is_exit_simple(expr) {
                         for (v, sn) in &drops {
-                            out.extend(self.drop_stmts(&loc, v, sn));
+                            out.extend(self.drop_stmts(&loc, v, sn, state));
                         }
                         out.push(stmt);
                     } else {
@@ -301,7 +474,7 @@ impl<'a> Ctx<'a> {
                             });
                         }
                         for (v, sn) in &drops {
-                            out.extend(self.drop_stmts(&loc, v, sn));
+                            out.extend(self.drop_stmts(&loc, v, sn, state));
                         }
                         out.push(stmt);
                     }
@@ -323,10 +496,12 @@ impl<'a> Ctx<'a> {
                             ) = args.first()
                             {
                                 let v = v.clone();
-                                if let Some(sn) = state.types.get(&v).cloned() {
-                                    out.extend(self.drop_stmts(loc, &v, &sn));
-                                    state.moved.insert(v);
-                                    expanded = true;
+                                if !state.is_shadowed(&v) {
+                                    if let Some(sn) = state.types.get(&v).cloned() {
+                                        out.extend(self.drop_stmts(loc, &v, &sn, state));
+                                        state.moved.insert(v);
+                                        expanded = true;
+                                    }
                                 }
                             }
                         }
@@ -361,12 +536,12 @@ impl<'a> Ctx<'a> {
             match result.as_deref() {
                 None => {
                     for (v, sn) in &drops {
-                        out.extend(self.drop_stmts(block_loc, v, sn));
+                        out.extend(self.drop_stmts(block_loc, v, sn, state));
                     }
                 }
                 Some(r) if is_exit_simple(r) => {
                     for (v, sn) in &drops {
-                        out.extend(self.drop_stmts(block_loc, v, sn));
+                        out.extend(self.drop_stmts(block_loc, v, sn, state));
                     }
                 }
                 Some(_) => {
@@ -379,7 +554,7 @@ impl<'a> Ctx<'a> {
                         expr: Box::new(res_expr),
                     });
                     for (v, sn) in &drops {
-                        out.extend(self.drop_stmts(block_loc, v, sn));
+                        out.extend(self.drop_stmts(block_loc, v, sn, state));
                     }
                     *result = Some(Box::new(Expr::EVar {
                         loc: block_loc.clone(),
@@ -394,7 +569,9 @@ impl<'a> Ctx<'a> {
     fn walk_expr(&self, expr: &mut Expr, state: &mut State) {
         match expr {
             Expr::EMove { name, .. } => {
-                state.moved.insert(name.clone());
+                if !state.is_shadowed(name) {
+                    state.moved.insert(name.clone());
+                }
             }
             Expr::EBlock { .. } => self.desugar_expr_as_block(expr, state, true),
             Expr::EIf {
@@ -439,15 +616,22 @@ impl<'a> Ctx<'a> {
                 if let Some(Expr::EVar { name: v, .. } | Expr::EMove { name: v, .. }) = args.first()
                 {
                     let v = v.clone();
-                    if let Some(sn) = state.types.get(&v).cloned() {
-                        if let Some(f) = self.drop_fns.get(&sn) {
-                            *name = f.clone();
-                            if let Some(a) = args.first_mut() {
-                                if let Expr::EMove { loc, .. } = a {
-                                    *a = Expr::EVar {
-                                        loc: loc.clone(),
-                                        name: v.clone(),
-                                    };
+                    if state.is_shadowed(&v) {
+                        return;
+                    }
+                    if let Some(t) = state.types.get(&v).cloned() {
+                        if let Typ::TStruct { name: sn, .. } = &t {
+                            if !self.enum_variants.contains_key(sn) {
+                                if let Some(f) = self.drop_fns.get(sn) {
+                                    *name = f.clone();
+                                    if let Some(a) = args.first_mut() {
+                                        if let Expr::EMove { loc, .. } = a {
+                                            *a = Expr::EVar {
+                                                loc: loc.clone(),
+                                                name: v.clone(),
+                                            };
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -631,6 +815,53 @@ mod tests {
         assert_eq!(stmts.len(), 4);
         assert_eq!(drop_call_target(&stmts[2]), Some(("file_close", "b")));
         assert_eq!(drop_call_target(&stmts[3]), Some(("file_close", "a")));
+    }
+
+    #[test]
+    fn test_inner_shadowing_let_does_not_poison_outer_droppable() {
+        // printlns!("...") expands to a statement block that declares its own
+        // `s` and moves it; that inner `s` must not consume an outer
+        // droppable also named `s`.
+        let macro_block = Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(Expr::EBlock {
+                loc: loc(),
+                stmts: vec![
+                    Stmt::SLet {
+                        loc: loc(),
+                        mutable: true,
+                        name: "s".to_string(),
+                        expr: Box::new(Expr::EString {
+                            loc: loc(),
+                            value: "".to_string(),
+                        }),
+                    },
+                    Stmt::SAssign {
+                        loc: loc(),
+                        name: "s".to_string(),
+                        expr: Box::new(Expr::EMove {
+                            loc: loc(),
+                            name: "s".to_string(),
+                        }),
+                    },
+                ],
+                result: None,
+            }),
+        };
+        let mut defs = vec![
+            file_struct(),
+            drop_impl(),
+            file_close_fn(),
+            make_fn("main", vec![], vec![let_file("s"), macro_block], None),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        assert_eq!(
+            drop_call_target(stmts.last().unwrap()),
+            Some(("file_close", "s")),
+            "outer droppable `s` must still be dropped at scope exit: {:?}",
+            stmts
+        );
     }
 
     #[test]
@@ -994,5 +1225,112 @@ mod tests {
         // let h; drop(h) → file_close(h.f) ; NO extra scope-exit drop
         assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
         assert_eq!(call_repr(&stmts[1]).as_deref(), Some("file_close(h.f)"));
+    }
+
+    // ── enum / array glue ───────────────────────────────────────────
+
+    fn slot_enum() -> Def {
+        Def::DEnum {
+            loc: loc(),
+            name: "Slot".to_string(),
+            type_params: vec![],
+            variants: vec![
+                EnumVariant { name: "Full".to_string(), payload: vec![file_typ()] },
+                EnumVariant { name: "Empty".to_string(), payload: vec![] },
+            ],
+        }
+    }
+
+    fn let_slot(name: &str) -> Stmt {
+        Stmt::SLetTyped {
+            loc: loc(),
+            name: name.to_string(),
+            typ: Typ::TStruct { name: "Slot".to_string(), fields: vec![], type_args: vec![] },
+            expr: Box::new(Expr::ECall {
+                loc: loc(),
+                name: "Slot.Full".to_string(),
+                type_args: vec![],
+                args: vec![Expr::EStructLit {
+                    loc: loc(),
+                    name: "File".to_string(),
+                    fields: vec![],
+                    type_args: vec![],
+                }],
+            }),
+        }
+    }
+
+    #[test]
+    fn test_enum_var_glue_drops_live_variant_payload() {
+        let mut defs = vec![
+            file_struct(),
+            slot_enum(),
+            drop_impl(),
+            file_close_fn(),
+            make_fn("main", vec![], vec![let_slot("s")], None),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        let Stmt::SExpr { expr, .. } = &stmts[1] else {
+            panic!("expected SExpr(choose), got: {:?}", stmts[1]);
+        };
+        let Expr::EChoose { var, cases, .. } = expr.as_ref() else {
+            panic!("expected choose over enum var, got: {:?}", expr);
+        };
+        assert!(matches!(var.as_ref(), Expr::EVar { name, .. } if name == "s"));
+        // Exactly one case: the Full variant, whose payload gets dropped.
+        assert_eq!(cases.len(), 1, "got cases: {:?}", cases);
+        let Expr::EEnumPattern { enum_name, variant, bindings, .. } = cases[0].when.as_ref()
+        else {
+            panic!("expected enum pattern, got: {:?}", cases[0].when);
+        };
+        assert_eq!(enum_name, "Slot");
+        assert_eq!(variant, "Full");
+        assert_eq!(bindings.len(), 1);
+        let Expr::EBlock { stmts: case_stmts, .. } = cases[0].then.as_ref() else {
+            panic!("expected block case body, got: {:?}", cases[0].then);
+        };
+        assert_eq!(
+            call_repr(&case_stmts[0]).as_deref(),
+            Some(format!("file_close({})", bindings[0]).as_str())
+        );
+    }
+
+    #[test]
+    fn test_array_var_glue_drops_elements_with_for_loop() {
+        let mut defs = vec![
+            file_struct(),
+            drop_impl(),
+            file_close_fn(),
+            make_fn(
+                "main",
+                vec![],
+                vec![Stmt::SLetTyped {
+                    loc: loc(),
+                    name: "arr".to_string(),
+                    typ: Typ::TArray { of: Box::new(file_typ()) },
+                    expr: Box::new(Expr::EArrayLit { loc: loc(), values: vec![] }),
+                }],
+                None,
+            ),
+        ];
+        desugar_drops(&mut defs);
+        let stmts = fn_body_stmts(&defs, "main");
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        let Stmt::SExpr { expr, .. } = &stmts[1] else {
+            panic!("expected SExpr(for), got: {:?}", stmts[1]);
+        };
+        let Expr::EFor { var, range, body, .. } = expr.as_ref() else {
+            panic!("expected for loop over array var, got: {:?}", expr);
+        };
+        assert!(matches!(range.as_ref(), Expr::EVar { name, .. } if name == "arr"));
+        let Expr::EBlock { stmts: body_stmts, .. } = body.as_ref() else {
+            panic!("expected block for body, got: {:?}", body);
+        };
+        assert_eq!(
+            call_repr(&body_stmts[0]).as_deref(),
+            Some(format!("file_close({})", var).as_str())
+        );
     }
 }
