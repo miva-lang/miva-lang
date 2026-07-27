@@ -3,6 +3,7 @@ mod codegen;
 mod commands;
 mod config;
 mod drop_desugar;
+mod droppable;
 mod error;
 mod json_ast;
 mod macro_expand;

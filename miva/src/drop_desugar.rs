@@ -40,29 +40,7 @@ pub fn desugar_drops(defs: &mut [Def]) {
     // Droppability is infectious: a struct containing a droppable field or an
     // enum carrying a droppable payload (at any nesting depth) needs drop
     // glue even without its own op_drop.
-    let mut droppable: HashSet<String> = drop_fns.keys().cloned().collect();
-    loop {
-        let before = droppable.len();
-        for (name, fields) in &struct_fields {
-            if !droppable.contains(name)
-                && fields.iter().any(|f| typ_droppable(&droppable, &f.typ))
-            {
-                droppable.insert(name.clone());
-            }
-        }
-        for (name, variants) in &enum_variants {
-            if !droppable.contains(name)
-                && variants
-                    .iter()
-                    .any(|v| v.payload.iter().any(|t| typ_droppable(&droppable, t)))
-            {
-                droppable.insert(name.clone());
-            }
-        }
-        if droppable.len() == before {
-            break;
-        }
-    }
+    let droppable = crate::droppable::compute_droppable(defs);
     let mut fn_returns: HashMap<String, Option<Typ>> = HashMap::new();
     for def in defs.iter() {
         if let Def::DFunc { name, returns, .. } = def {
@@ -97,14 +75,6 @@ pub fn desugar_drops(defs: &mut [Def]) {
             }
             _ => {}
         }
-    }
-}
-
-fn typ_droppable(droppable: &HashSet<String>, t: &Typ) -> bool {
-    match t {
-        Typ::TStruct { name, .. } => droppable.contains(name),
-        Typ::TArray { of } => typ_droppable(droppable, of),
-        _ => false,
     }
 }
 
@@ -157,7 +127,7 @@ impl State {
 
 impl<'a> Ctx<'a> {
     fn is_droppable(&self, typ: &Typ) -> bool {
-        typ_droppable(self.droppable, typ)
+        crate::droppable::is_droppable_typ(self.droppable, typ)
     }
 
     fn droppable_typ(&self, typ: &Typ) -> Option<Typ> {

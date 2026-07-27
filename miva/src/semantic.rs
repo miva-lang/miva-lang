@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
+use crate::droppable::is_droppable_typ;
 use crate::error::Error;
 use crate::symbol_table::SymbolTable;
 
@@ -27,14 +28,6 @@ struct Context {
     caller_safety: Safety,
     global_safety: HashMap<String, Safety>,
     droppable: HashSet<String>,
-}
-
-fn is_droppable_typ(droppable: &HashSet<String>, t: &Typ) -> bool {
-    match t {
-        Typ::TStruct { name, .. } => droppable.contains(name),
-        Typ::TArray { of } => is_droppable_typ(droppable, of),
-        _ => false,
-    }
 }
 
 fn droppable_typ_name(t: &Typ) -> String {
@@ -854,50 +847,7 @@ pub fn check_program_with(
         })
         .collect();
 
-    let mut droppable: HashSet<String> = defs
-        .iter()
-        .filter_map(|d| match d {
-            Def::DImpl {
-                struct_name, impls, ..
-            } if impls.iter().any(|i| matches!(i.op, ImplOp::ImDrop)) => {
-                Some(struct_name.clone())
-            }
-            _ => None,
-        })
-        .collect();
-    // Droppability is infectious: a struct containing a droppable field or an
-    // enum carrying a droppable payload (at any nesting depth) is itself
-    // droppable, even without its own op_drop.
-    let enum_payloads: HashMap<String, Vec<Typ>> = defs
-        .iter()
-        .filter_map(|d| match d {
-            Def::DEnum { name, variants, .. } => Some((
-                name.clone(),
-                variants.iter().flat_map(|v| v.payload.clone()).collect(),
-            )),
-            _ => None,
-        })
-        .collect();
-    loop {
-        let before = droppable.len();
-        for (name, fields) in &types {
-            if !droppable.contains(name)
-                && fields.iter().any(|f| is_droppable_typ(&droppable, &f.typ))
-            {
-                droppable.insert(name.clone());
-            }
-        }
-        for (name, payloads) in &enum_payloads {
-            if !droppable.contains(name)
-                && payloads.iter().any(|t| is_droppable_typ(&droppable, t))
-            {
-                droppable.insert(name.clone());
-            }
-        }
-        if droppable.len() == before {
-            break;
-        }
-    }
+    let droppable = crate::droppable::compute_droppable(defs);
 
     // v1 generic-argument ban (E0036): droppable types may not appear as
     // generic arguments (generic structs, future[T], box<T>).
