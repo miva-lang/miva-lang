@@ -142,14 +142,14 @@ pub fn resolve_c_escapes(s: &str) -> String {
 
 /// Generate C++ code from the AST (default backend).
 pub fn build_ir(defs: &[Def]) -> [String; 3] {
-    cxx::build_ir(defs)
+    cxx_ir::build_ir(defs)
 }
 
 /// Generate code from the AST using the specified backend.
 pub fn build_ir_with_backend(defs: &[Def], backend: Backend, func_sigs: &HashMap<String, FuncSig>) -> GeneratedOutput {
     match backend {
         Backend::Cxx => {
-            let [program, header, test] = cxx::build_ir(defs);
+            let [program, header, test] = cxx_ir::build_ir(defs);
             GeneratedOutput {
                 program: program.into_bytes(),
                 header,

@@ -62,7 +62,7 @@ fn read_dep_cache(path: &Path, source: &str) -> Option<Vec<String>> {
     Some(content.lines().map(|l| l.to_string()).collect())
 }
 
-fn _write_dep_cache(path: &Path, deps: &[String]) {
+fn write_dep_cache(path: &Path, deps: &[String]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -167,6 +167,7 @@ fn collect_imports_with_graph(
             })
             .collect();
 
+        write_dep_cache(&dep_path, &paths);
         paths
     };
 

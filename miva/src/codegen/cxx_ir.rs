@@ -1,18 +1,18 @@
 use crate::ast::*;
-use crate::codegen::cxx::{cxx_param, cxx_type, cxx_func_decl, mangle_cpp_kw, module_parts, cxx_module, cxx_include_here, cxx_include_path, indent_str, cxx_escape_string, map_builtin};
+use crate::codegen::cxx::{cxx_param, cxx_type, cxx_func_decl, mangle_cpp_kw, module_parts, cxx_module, cxx_include_here, cxx_include_path, indent_str, cxx_escape_string, map_builtin, collect_generic_params};
 use crate::symbol_table::SymbolTable;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 thread_local! {
-    static CLOSURE_DEFS_IR: RefCell<HashMap<usize, IrClosureDef>> = RefCell::new(HashMap::new());
-    static CLOSURE_ID_IR: RefCell<usize> = RefCell::new(0);
-    static ENUM_DEFS_IR: RefCell<HashMap<String, Vec<crate::ast::EnumVariant>>> =
+    static CLOSURE_DEFS: RefCell<HashMap<usize, IrClosureDef>> = RefCell::new(HashMap::new());
+    static CLOSURE_ID: RefCell<usize> = RefCell::new(0);
+    static ENUM_DEFS: RefCell<HashMap<String, Vec<crate::ast::EnumVariant>>> =
         RefCell::new(HashMap::new());
 }
 
-fn next_closure_id_ir() -> usize {
-    CLOSURE_ID_IR.with(|c| {
+fn next_closure_id() -> usize {
+    CLOSURE_ID.with(|c| {
         let mut id = c.borrow_mut();
         let v = *id;
         *id += 1;
@@ -20,17 +20,17 @@ fn next_closure_id_ir() -> usize {
     })
 }
 
-fn reset_closure_registry_ir() {
-    CLOSURE_DEFS_IR.with(|c| c.borrow_mut().clear());
-    CLOSURE_ID_IR.with(|c| *c.borrow_mut() = 0);
+fn reset_closure_registry() {
+    CLOSURE_DEFS.with(|c| c.borrow_mut().clear());
+    CLOSURE_ID.with(|c| *c.borrow_mut() = 0);
 }
 
-fn emit_closure_def_ir(def: IrClosureDef) {
-    CLOSURE_DEFS_IR.with(|c| { c.borrow_mut().insert(def.id, def); });
+fn emit_closure_def(def: IrClosureDef) {
+    CLOSURE_DEFS.with(|c| { c.borrow_mut().insert(def.id, def); });
 }
 
-fn take_closure_defs_ir() -> String {
-    let closures: Vec<IrClosureDef> = CLOSURE_DEFS_IR.with(|c| {
+fn take_closure_defs() -> String {
+    let closures: Vec<IrClosureDef> = CLOSURE_DEFS.with(|c| {
         let map = c.borrow();
         let mut ids: Vec<_> = map.keys().copied().collect();
         ids.sort();
@@ -72,12 +72,12 @@ fn take_closure_defs_ir() -> String {
         );
         format!("{}\n{}", env_struct, thunk)
     }).collect::<Vec<_>>().join("\n\n");
-    CLOSURE_DEFS_IR.with(|c| c.borrow_mut().clear());
+    CLOSURE_DEFS.with(|c| c.borrow_mut().clear());
     out
 }
 
-fn record_enum_defs_ir(defs: &[Def]) {
-    ENUM_DEFS_IR.with(|m| {
+fn record_enum_defs(defs: &[Def]) {
+    ENUM_DEFS.with(|m| {
         let mut map = m.borrow_mut();
         map.clear();
         for d in defs {
@@ -88,8 +88,8 @@ fn record_enum_defs_ir(defs: &[Def]) {
     });
 }
 
-fn first_payload_variant_ir(enum_name: &str) -> Option<String> {
-    ENUM_DEFS_IR.with(|m| {
+fn first_payload_variant(enum_name: &str) -> Option<String> {
+    ENUM_DEFS.with(|m| {
         m.borrow().get(enum_name).and_then(|variants| {
             variants
                 .iter()
@@ -99,41 +99,41 @@ fn first_payload_variant_ir(enum_name: &str) -> Option<String> {
     })
 }
 
-fn enum_payload_field_ref_ir(var_str: &str, enum_name: &str, variant: &str, field: usize) -> String {
-    if first_payload_variant_ir(enum_name).as_deref() == Some(variant) {
+fn enum_payload_field_ref(var_str: &str, enum_name: &str, variant: &str, field: usize) -> String {
+    if first_payload_variant(enum_name).as_deref() == Some(variant) {
         format!("{}.__payload.field{}", var_str, field)
     } else {
         format!("{}.__payload.{}.field{}", var_str, variant, field)
     }
 }
 
-fn is_panic_ir(e: &Expr) -> bool {
+fn is_panic(e: &Expr) -> bool {
     match e {
         Expr::ECall { name, .. } if name == "panic" => true,
         Expr::EBlock { stmts, result, .. } => {
             (result.is_none()
                 && stmts.iter().any(|s| match s {
-                    Stmt::SExpr { expr, .. } => is_panic_ir(expr),
-                    Stmt::SReturn { expr, .. } => is_panic_ir(expr),
+                    Stmt::SExpr { expr, .. } => is_panic(expr),
+                    Stmt::SReturn { expr, .. } => is_panic(expr),
                     _ => false,
                 }))
-            || result.as_ref().map_or(false, |r| is_panic_ir(r))
+            || result.as_ref().map_or(false, |r| is_panic(r))
         }
         _ => false,
     }
 }
 
-fn is_panic_ir_expr(e: &IrExpr) -> bool {
+fn is_panic_expr(e: &IrExpr) -> bool {
     match e {
         IrExpr::Call { name, .. } if name == "panic" => true,
         IrExpr::Block { stmts, result, .. } => {
             (result.is_none()
                 && stmts.iter().any(|s| match s {
-                    IrStmt::Expr(e) => is_panic_ir_expr(e),
-                    IrStmt::Return(e) => is_panic_ir_expr(e),
+                    IrStmt::Expr(e) => is_panic_expr(e),
+                    IrStmt::Return(e) => is_panic_expr(e),
                     _ => false,
                 }))
-            || result.as_ref().map_or(false, |r| is_panic_ir_expr(r))
+            || result.as_ref().map_or(false, |r| is_panic_expr(r))
         }
         _ => false,
     }
@@ -274,8 +274,8 @@ fn lower_expr(ctx: &mut IrContext, expr: &Expr) -> IrExpr {
             IrExpr::BinOp { op: op.clone(), left: Box::new(lower_expr(ctx, left)), right: Box::new(lower_expr(ctx, right)) }
         }
         Expr::EIf { cond, then, else_, .. } => {
-            let has_panic = else_.as_ref().map_or(false, |e| is_panic_ir(e))
-                || is_panic_ir(then);
+            let has_panic = else_.as_ref().map_or(false, |e| is_panic(e))
+                || is_panic(then);
             IrExpr::IfValue {
                 cond: Box::new(lower_expr(ctx, cond)),
                 then: Box::new(lower_expr(ctx, then)),
@@ -372,7 +372,7 @@ fn lower_expr(ctx: &mut IrContext, expr: &Expr) -> IrExpr {
                 format!("mvp_closure<{}, {}>", ret_cxx, inner_tys.join(", "))
             };
 
-            emit_closure_def_ir(IrClosureDef {
+            emit_closure_def(IrClosureDef {
                 id,
                 env_fields,
                 thunk_sig: format!("static {} __closure_thunk_{}(void* __env_ptr, {})", ret_cxx, id, param_list),
@@ -386,8 +386,8 @@ fn lower_expr(ctx: &mut IrContext, expr: &Expr) -> IrExpr {
             IrExpr::ClosureRef { id }
         }
         Expr::EChoose { var, cases, otherwise, .. } => {
-            let has_panic = cases.iter().any(|c| is_panic_ir(&c.then))
-                || otherwise.as_ref().map_or(false, |e| is_panic_ir(e));
+            let has_panic = cases.iter().any(|c| is_panic(&c.then))
+                || otherwise.as_ref().map_or(false, |e| is_panic(e));
             let lowered_var = lower_expr(ctx, var);
             let lowered_cases: Vec<IrCase> = cases.iter().map(|c| {
                 let pattern = match c.when.as_ref() {
@@ -1022,7 +1022,7 @@ fn emit_for(var: &str, range: &IrExpr, body: &[IrStmt], result: &Option<Box<IrEx
 fn emit_closure_ref(id: usize) -> String {
     let env_name = format!("__closure_env_{}", id);
     let thunk_name = format!("__closure_thunk_{}", id);
-    let closure = CLOSURE_DEFS_IR.with(|c| {
+    let closure = CLOSURE_DEFS.with(|c| {
         let closures = c.borrow();
         closures.get(&id).map(|cl| cl.clone())
     });
@@ -1061,7 +1061,7 @@ fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box<IrExpr>>, 
     let phantom_return = |t: &str| -> String { format!("return {}();", t) };
     let cast = |t: &str, e: &str| -> String { format!("static_cast<{}>({})", t, e) };
     let branch_body = |e: &IrExpr| -> String {
-        if is_panic_ir_expr(e) {
+        if is_panic_expr(e) {
             if let Some(t) = expected_type {
                 format!(
                     "{}{}; {}",
@@ -1104,7 +1104,7 @@ fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box<IrExpr>>, 
                         indent_str(inner),
                         ind,
                         b,
-                        enum_payload_field_ref_ir(&var_str, &bind_enum, &bind_variant, i)
+                        enum_payload_field_ref(&var_str, &bind_enum, &bind_variant, i)
                     )
                 })
                 .collect();
@@ -1148,7 +1148,7 @@ fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box<IrExpr>>, 
         }
     });
     let otherwise_str = match otherwise {
-        Some(e) if is_panic_ir_expr(e) => {
+        Some(e) if is_panic_expr(e) => {
             if let Some(t) = expected_type {
                 format!(
                     "{}else {{ {}; {} }}",
@@ -1417,38 +1417,6 @@ fn emit_cfunc(name: &str, params: &[Param], returns: &Option<Typ>, code: &str, i
     format!("{} {} {{\n{}{}}}\n\n", ind, signature, code, ind)
 }
 
-fn collect_generic_params_ir(typ: &Typ, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
-    match typ {
-        Typ::TGenericParam { name } => {
-            if seen.insert(name.clone()) {
-                out.push(name.clone());
-            }
-        }
-        Typ::TStruct { name, fields, type_args } => {
-            if fields.is_empty() && type_args.is_empty() && name.len() == 1 && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
-                if seen.insert(name.clone()) {
-                    out.push(name.clone());
-                }
-            } else {
-                for a in type_args {
-                    collect_generic_params_ir(a, seen, out);
-                }
-            }
-        }
-        Typ::TPtr { to } => collect_generic_params_ir(to, seen, out),
-        Typ::TBox { of } => collect_generic_params_ir(of, seen, out),
-        Typ::TFuture { of } => collect_generic_params_ir(of, seen, out),
-        Typ::TArray { of } => collect_generic_params_ir(of, seen, out),
-        Typ::TFunc { params, returns } => {
-            for p in params {
-                collect_generic_params_ir(p, seen, out);
-            }
-            collect_generic_params_ir(returns, seen, out);
-        }
-        _ => {}
-    }
-}
-
 fn emit_normal_func(name: &str, type_params: &[String], params: &[Param], returns: &Option<Typ>, body_stmts: &[IrStmt], body_result: &Option<IrExpr>, ind: String, _inner: usize) -> String {
     let param_strs: Vec<_> = params.iter().map(cxx_param).collect();
     let ret_type = returns.as_ref().map_or("mvp_builtin_unit".into(), cxx_type);
@@ -1459,10 +1427,10 @@ fn emit_normal_func(name: &str, type_params: &[String], params: &[Param], return
         let typ = match p {
             Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
         };
-        collect_generic_params_ir(typ, &mut seen, &mut extra_tparams);
+        collect_generic_params(typ, &mut seen, &mut extra_tparams);
     }
     if let Some(r) = returns {
-        collect_generic_params_ir(r, &mut seen, &mut extra_tparams);
+        collect_generic_params(r, &mut seen, &mut extra_tparams);
     }
     let all_tparams: Vec<String> = {
         let mut combined: Vec<String> = type_params.to_vec();
@@ -1632,13 +1600,13 @@ fn emit_module(name: &str, defs: &[IrDef], ind: String, inner: usize) -> String 
 
 // ===== PROGRAM ASSEMBLY =====
 
-struct ScopePartsIr {
+struct ScopeParts {
     includes: String,
     defs_str: String,
     main_functions: String,
 }
 
-fn generate_with_scope_ir(defs: &[IrDef], module: Option<&str>) -> ScopePartsIr {
+fn generate_with_scope(defs: &[IrDef], module: Option<&str>) -> ScopeParts {
     let mut includes = String::new();
     let mut defs_str = String::new();
     let mut main_functions = String::new();
@@ -1652,7 +1620,7 @@ fn generate_with_scope_ir(defs: &[IrDef], module: Option<&str>) -> ScopePartsIr 
                     .map(|p| format!("namespace {} {{\n\n", p))
                     .collect();
                 let ns_end: String = parts.iter().map(|_| "}\n\n".to_string()).collect();
-                let inner = generate_with_scope_ir(inner_defs, Some(name.as_str()));
+                let inner = generate_with_scope(inner_defs, Some(name.as_str()));
                 includes.push_str(&inner.includes);
                 defs_str.push_str(&ns_start);
                 defs_str.push_str(&inner.defs_str);
@@ -1681,7 +1649,7 @@ fn generate_with_scope_ir(defs: &[IrDef], module: Option<&str>) -> ScopePartsIr 
         }
     }
 
-    ScopePartsIr {
+    ScopeParts {
         includes,
         defs_str,
         main_functions,
@@ -1708,28 +1676,28 @@ fn emit_main_func(body_stmts: &[IrStmt], body_result: &Option<IrExpr>) -> String
     out
 }
 
-fn collect_imports_ir(defs: &[IrDef], out: &mut Vec<String>) {
+fn collect_imports(defs: &[IrDef], out: &mut Vec<String>) {
     for d in defs.iter() {
         match d {
             IrDef::Import { path, .. }
             | IrDef::ImportHere { path, .. }
             | IrDef::ImportAs { path, .. } => out.push(path.clone()),
-            IrDef::Module { defs: inner, .. } => collect_imports_ir(inner, out),
+            IrDef::Module { defs: inner, .. } => collect_imports(inner, out),
             _ => {}
         }
     }
 }
 
-fn generate_header_ir(defs: &[IrDef]) -> String {
+fn generate_header(defs: &[IrDef]) -> String {
     let sym = SymbolTable::build(&defs_to_ast(defs));
     let mut exported = String::new();
-    collect_exported_rec_ir(defs, &sym, &[], &mut exported);
+    collect_exported_rec(defs, &sym, &[], &mut exported);
     if exported.is_empty() {
         return String::new();
     }
     let mut includes = String::from("#include <mvp_builtin.h>\n");
     let mut import_paths = Vec::new();
-    collect_imports_ir(defs, &mut import_paths);
+    collect_imports(defs, &mut import_paths);
     for path in &import_paths {
         let inc = cxx_include_here(path);
         if !inc.is_empty() {
@@ -1860,7 +1828,7 @@ fn ir_def_to_ast(def: &IrDef) -> Def {
     }
 }
 
-fn find_and_emit_func_ir(defs: &[IrDef], name: &str) -> String {
+fn find_and_emit_func(defs: &[IrDef], name: &str) -> String {
     for d in defs {
         if let IrDef::Func { name: n, type_params, params, returns, body_stmts, body_result, .. } = d {
             if n == name {
@@ -1871,12 +1839,12 @@ fn find_and_emit_func_ir(defs: &[IrDef], name: &str) -> String {
     String::new()
 }
 
-fn collect_exported_names_ir(defs: &[IrDef]) -> std::collections::HashSet<String> {
+fn collect_exported_names(defs: &[IrDef]) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for def in defs.iter() {
         match def {
             IrDef::Module { defs: inner_defs, .. } => {
-                names.extend(collect_exported_names_ir(inner_defs));
+                names.extend(collect_exported_names(inner_defs));
             }
             IrDef::Export(symbol) => {
                 names.insert(symbol.clone());
@@ -1887,8 +1855,8 @@ fn collect_exported_names_ir(defs: &[IrDef]) -> std::collections::HashSet<String
     names
 }
 
-fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &[String], result: &mut String) {
-    let exported = collect_exported_names_ir(defs);
+fn collect_exported_rec(defs: &[IrDef], sym: &SymbolTable, current_modules: &[String], result: &mut String) {
+    let exported = collect_exported_names(defs);
     // First pass: emit struct and enum definitions
     for def in defs.iter() {
         match def {
@@ -1902,7 +1870,7 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
                     .collect();
                 let ns_end: String = parts.iter().map(|_| "}\n\n".to_string()).collect();
                 result.push_str(&ns_start);
-                collect_exported_rec_ir(inner_defs, sym, &new_modules, result);
+                collect_exported_rec(inner_defs, sym, &new_modules, result);
                 result.push_str(&ns_end);
                 return;
             }
@@ -1971,7 +1939,7 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
         match def {
             IrDef::Func { name, type_params, params, returns, body_stmts, body_result, .. } => {
                 if exported.contains(name.as_str()) {
-                    let decl = find_and_emit_func_ir(defs, name);
+                    let decl = find_and_emit_func(defs, name);
                     result.push_str(&decl);
                 } else {
                     let has_tparams = !type_params.is_empty() || {
@@ -1981,15 +1949,15 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
                             let typ = match p {
                                 Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
                             };
-                            collect_generic_params_ir(typ, &mut seen, &mut extra);
+                            collect_generic_params(typ, &mut seen, &mut extra);
                         }
                         if let Some(r) = returns {
-                            collect_generic_params_ir(r, &mut seen, &mut extra);
+                            collect_generic_params(r, &mut seen, &mut extra);
                         }
                         !extra.is_empty()
                     };
                     if has_tparams {
-                        let decl = find_and_emit_func_ir(defs, name);
+                        let decl = find_and_emit_func(defs, name);
                         result.push_str(&decl);
                     } else {
                         result.push_str(&cxx_func_decl(name, params, returns));
@@ -1998,7 +1966,7 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
             }
             IrDef::AsyncFunc { name, type_params, params, returns, body_stmts, body_result, .. } => {
                 if exported.contains(name.as_str()) {
-                    let decl = find_and_emit_func_ir(defs, name);
+                    let decl = find_and_emit_func(defs, name);
                     result.push_str(&decl);
                 } else {
                     let has_tparams = !type_params.is_empty() || {
@@ -2008,15 +1976,15 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
                             let typ = match p {
                                 Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ,
                             };
-                            collect_generic_params_ir(typ, &mut seen, &mut extra);
+                            collect_generic_params(typ, &mut seen, &mut extra);
                         }
                         if let Some(r) = returns {
-                            collect_generic_params_ir(r, &mut seen, &mut extra);
+                            collect_generic_params(r, &mut seen, &mut extra);
                         }
                         !extra.is_empty()
                     };
                     if has_tparams {
-                        let decl = find_and_emit_func_ir(defs, name);
+                        let decl = find_and_emit_func(defs, name);
                         result.push_str(&decl);
                     } else {
                         result.push_str(&cxx_func_decl(name, params, returns));
@@ -2028,7 +1996,7 @@ fn collect_exported_rec_ir(defs: &[IrDef], sym: &SymbolTable, current_modules: &
     }
 }
 
-fn generate_test_ir(defs: &[IrDef]) -> String {
+fn generate_test(defs: &[IrDef]) -> String {
     let modname = defs
         .iter()
         .find_map(|d| match d {
@@ -2087,16 +2055,16 @@ using namespace std;
 // ===== ENTRY POINT =====
 
 pub fn build_ir(defs: &[Def]) -> [String; 3] {
-    record_enum_defs_ir(defs);
-    reset_closure_registry_ir();
+    record_enum_defs(defs);
+    reset_closure_registry();
 
     let mut ctx = IrContext::new();
     let ir_defs: Vec<IrDef> = lower_defs(&mut ctx, defs);
     let ir_defs = optimize_defs(ir_defs);
 
-    let header_content = generate_header_ir(&ir_defs);
-    let scope_parts = generate_with_scope_ir(&ir_defs, None);
-    let closure_defs = take_closure_defs_ir();
+    let header_content = generate_header(&ir_defs);
+    let scope_parts = generate_with_scope(&ir_defs, None);
+    let closure_defs = take_closure_defs();
     let preamble = "\
 #include <iostream>
 #include <string>
@@ -2129,7 +2097,7 @@ using namespace std;
         "{}{}{}\n{}\n{}\n",
         preamble, scope_parts.includes, closure_defs, scope_parts.defs_str, scope_parts.main_functions
     );
-    let test = generate_test_ir(&ir_defs);
+    let test = generate_test(&ir_defs);
     [program, header_content, test]
 }
 
@@ -2224,6 +2192,497 @@ mod tests {
             program.contains("file_close"),
             "trailing call in while body was dropped:\n{}",
             program
+        );
+    }
+
+    // ===== production pipeline helpers (lower → optimize → emit) =====
+
+    fn ir_expr(e: &Expr) -> String {
+        let mut ctx = IrContext::new();
+        emit_expr(&optimize_expr(lower_expr(&mut ctx, e)), 0, None)
+    }
+
+    fn ir_stmt(s: &Stmt) -> String {
+        let mut ctx = IrContext::new();
+        lower_stmt(&mut ctx, s)
+            .into_iter()
+            .flat_map(optimize_stmt)
+            .map(|st| emit_stmt(&st, 0))
+            .collect()
+    }
+
+    fn ir_def(d: &Def) -> String {
+        let mut ctx = IrContext::new();
+        emit_def(&optimize_def(lower_def(&mut ctx, d)), 0)
+    }
+
+    fn var(name: &str) -> Expr {
+        Expr::EVar { loc: loc(), name: name.into() }
+    }
+
+    fn int(value: i64) -> Expr {
+        Expr::EInt { loc: loc(), value }
+    }
+
+    // ===== Unicode string encoding =====
+
+    #[test]
+    fn test_expr_string_unicode_bytes() {
+        let value = "\u{2550}";
+        assert_eq!(value.as_bytes(), &[0xe2, 0x95, 0x90]);
+
+        let result = ir_expr(&Expr::EString { loc: loc(), value: value.to_string() });
+        let prefix = "mvp_builtin_string(\"";
+        let suffix = "\")";
+        assert!(result.starts_with(prefix));
+        assert!(result.ends_with(suffix));
+        let inner = &result[prefix.len()..result.len() - suffix.len()];
+        assert_eq!(
+            inner.as_bytes(),
+            &[0xe2, 0x95, 0x90],
+            "Inner string value should be correct UTF-8, not C3 A2 C2 95 C2 90"
+        );
+    }
+
+    #[test]
+    fn test_build_ir_unicode_with_macro_expansion() {
+        let body_expr = Expr::EBlock {
+            loc: loc(),
+            stmts: vec![Stmt::SExpr {
+                loc: loc(),
+                expr: Box::new(Expr::ECall {
+                    loc: loc(),
+                    name: "print".to_string(),
+                    type_args: vec![],
+                    args: vec![Expr::EString {
+                        loc: loc(),
+                        value: "\u{2550}\u{2550}\u{2550} Hello\u{2550}\u{2550}\u{2550}".to_string(),
+                    }],
+                }),
+            }],
+            result: None,
+        };
+
+        let defs = vec![Def::DFunc {
+            loc: loc(),
+            name: "main".to_string(),
+            type_params: vec![],
+            params: vec![],
+            returns: None,
+            body: Box::new(body_expr),
+            safety: Safety::Safe,
+            is_async: false,
+            type_bounds: vec![],
+        }];
+
+        let [program, _header, _test] = build_ir(&defs);
+
+        let correct: &[u8] = &[0xe2, 0x95, 0x90];
+        let wrong_triple: &[u8] = &[0xc3, 0xa2, 0xc2, 0x95, 0xc2, 0x90];
+
+        assert!(
+            program.as_bytes().windows(3).any(|w| w == correct),
+            "program bytes should contain correct UTF-8 for \u{2550}"
+        );
+        assert!(
+            !program.as_bytes().windows(6).any(|w| w == wrong_triple),
+            "program bytes should NOT contain double-encoded UTF-8"
+        );
+    }
+
+    // ===== expr - primitives =====
+
+    #[test]
+    fn test_expr_int() {
+        assert_eq!(ir_expr(&int(42)), "static_cast<mvp_builtin_int>(42)");
+    }
+
+    #[test]
+    fn test_expr_neg_int() {
+        assert_eq!(ir_expr(&int(-5)), "static_cast<mvp_builtin_int>(-5)");
+    }
+
+    #[test]
+    fn test_expr_bool_true() {
+        let e = Expr::EBool { loc: loc(), value: true };
+        assert_eq!(ir_expr(&e), "mvp_builtin_boolean(true)");
+    }
+
+    #[test]
+    fn test_expr_bool_false() {
+        let e = Expr::EBool { loc: loc(), value: false };
+        assert_eq!(ir_expr(&e), "mvp_builtin_boolean(false)");
+    }
+
+    #[test]
+    fn test_expr_float() {
+        let e = Expr::EFloat { loc: loc(), value: 3.14 };
+        assert_eq!(ir_expr(&e), "mvp_builtin_float(3.14)");
+    }
+
+    #[test]
+    fn test_expr_float_zero() {
+        let e = Expr::EFloat { loc: loc(), value: 0.0 };
+        assert_eq!(ir_expr(&e), "mvp_builtin_float(0)");
+    }
+
+    #[test]
+    fn test_expr_char() {
+        let e = Expr::EChar { loc: loc(), value: "a".into() };
+        assert_eq!(ir_expr(&e), "mvp_builtin_byte('a')");
+    }
+
+    #[test]
+    fn test_expr_string() {
+        let e = Expr::EString { loc: loc(), value: "hello".into() };
+        assert_eq!(ir_expr(&e), "mvp_builtin_string(\"hello\")");
+    }
+
+    #[test]
+    fn test_expr_var() {
+        assert_eq!(ir_expr(&var("x")), "x");
+    }
+
+    #[test]
+    fn test_expr_move() {
+        let e = Expr::EMove { loc: loc(), name: "x".into() };
+        assert_eq!(ir_expr(&e), "std::move(x)");
+    }
+
+    #[test]
+    fn test_expr_clone() {
+        let e = Expr::EClone { loc: loc(), name: "x".into() };
+        assert_eq!(ir_expr(&e), "decltype(x)(x)");
+    }
+
+    #[test]
+    fn test_expr_void() {
+        assert_eq!(ir_expr(&Expr::EVoid { loc: loc() }), "mvp_builtin_void");
+    }
+
+    #[test]
+    fn test_expr_addr() {
+        let e = Expr::EAddr { loc: loc(), expr: Box::new(var("x")) };
+        assert_eq!(ir_expr(&e), "&(x)");
+    }
+
+    #[test]
+    fn test_expr_deref() {
+        let e = Expr::EDeref { loc: loc(), expr: Box::new(var("p")) };
+        assert_eq!(ir_expr(&e), "*(p)");
+    }
+
+    #[test]
+    fn test_expr_macro_empty() {
+        let e = Expr::EMacro { loc: loc(), name: "something".into(), args: vec![] };
+        assert_eq!(ir_expr(&e), "");
+    }
+
+    #[test]
+    fn test_expr_field_access() {
+        let e = Expr::EFieldAccess {
+            loc: loc(),
+            expr: Box::new(var("p")),
+            field: "x".into(),
+        };
+        assert_eq!(ir_expr(&e), "p.x");
+    }
+
+    #[test]
+    fn test_expr_cast() {
+        let e = Expr::ECast {
+            loc: loc(),
+            expr: Box::new(int(65)),
+            to: Typ::TChar,
+        };
+        assert_eq!(
+            ir_expr(&e),
+            "static_cast<mvp_builtin_byte>(static_cast<mvp_builtin_int>(65))"
+        );
+    }
+
+    // ===== binop =====
+
+    fn binop(op: BinOp) -> Expr {
+        Expr::EBinOp {
+            loc: loc(),
+            op,
+            left: Box::new(var("a")),
+            right: Box::new(var("b")),
+        }
+    }
+
+    #[test]
+    fn test_binop_add() {
+        assert_eq!(ir_expr(&binop(BinOp::Add)), "(a + b)");
+    }
+
+    #[test]
+    fn test_binop_sub() {
+        assert_eq!(ir_expr(&binop(BinOp::Sub)), "(a - b)");
+    }
+
+    #[test]
+    fn test_binop_mul() {
+        assert_eq!(ir_expr(&binop(BinOp::Mul)), "(a * b)");
+    }
+
+    #[test]
+    fn test_binop_eq() {
+        assert_eq!(ir_expr(&binop(BinOp::Eq)), "(a == b)");
+    }
+
+    #[test]
+    fn test_binop_neq() {
+        assert_eq!(ir_expr(&binop(BinOp::Neq)), "(a != b)");
+    }
+
+    #[test]
+    fn test_binop_constant_folding() {
+        let e = Expr::EBinOp {
+            loc: loc(),
+            op: BinOp::Add,
+            left: Box::new(int(1)),
+            right: Box::new(int(2)),
+        };
+        assert_eq!(ir_expr(&e), "static_cast<mvp_builtin_int>(3)");
+    }
+
+    // ===== call =====
+
+    fn call(name: &str, type_args: Vec<Typ>, args: Vec<Expr>) -> Expr {
+        Expr::ECall { loc: loc(), name: name.into(), type_args, args }
+    }
+
+    #[test]
+    fn test_call_no_args() {
+        assert_eq!(ir_expr(&call("foo", vec![], vec![])), "foo()");
+    }
+
+    #[test]
+    fn test_call_with_args() {
+        let e = call("add", vec![], vec![var("x"), int(1)]);
+        assert_eq!(ir_expr(&e), "add(x, static_cast<mvp_builtin_int>(1))");
+    }
+
+    #[test]
+    fn test_call_builtin_print() {
+        let e = call("print", vec![], vec![Expr::EString { loc: loc(), value: "hello".into() }]);
+        assert_eq!(ir_expr(&e), "mvp_print(mvp_builtin_string(\"hello\"))");
+    }
+
+    // ===== if =====
+
+    #[test]
+    fn test_if_no_else() {
+        let e = Expr::EIf {
+            loc: loc(),
+            cond: Box::new(var("c")),
+            then: Box::new(int(1)),
+            else_: None,
+        };
+        let result = ir_expr(&e);
+        assert!(result.starts_with("([&]() -> void { if ("), "got: {}", result);
+        assert!(result.contains("c"));
+        assert!(result.contains("1"));
+    }
+
+    #[test]
+    fn test_if_with_else() {
+        let e = Expr::EIf {
+            loc: loc(),
+            cond: Box::new(var("c")),
+            then: Box::new(int(1)),
+            else_: Some(Box::new(int(2))),
+        };
+        assert!(ir_expr(&e).contains("else"));
+    }
+
+    #[test]
+    fn test_if_constant_cond_folds_to_then() {
+        let e = Expr::EIf {
+            loc: loc(),
+            cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+            then: Box::new(int(1)),
+            else_: Some(Box::new(int(2))),
+        };
+        assert_eq!(ir_expr(&e), "static_cast<mvp_builtin_int>(1)");
+    }
+
+    #[test]
+    fn test_choose_with_guard() {
+        let e = Expr::EChoose {
+            loc: loc(),
+            var: Box::new(var("x")),
+            cases: vec![WhenCase {
+                when: Box::new(int(1)),
+                guard: Some(Box::new(Expr::EBinOp {
+                    loc: loc(),
+                    op: BinOp::Gt,
+                    left: Box::new(var("x")),
+                    right: Box::new(int(0)),
+                })),
+                then: Box::new(int(10)),
+            }],
+            otherwise: Some(Box::new(int(0))),
+        };
+        let result = ir_expr(&e);
+        assert!(result.contains("&&"), "expected guard && in: {}", result);
+        assert!(result.contains("x >"), "expected guard comparison in: {}", result);
+    }
+
+    // ===== loops in value position =====
+
+    #[test]
+    fn test_while_basic() {
+        let e = Expr::EWhile {
+            loc: loc(),
+            cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+            body: Box::new(Expr::EVoid { loc: loc() }),
+        };
+        assert!(ir_expr(&e).starts_with("([&]() { while ("));
+    }
+
+    #[test]
+    fn test_loop_basic() {
+        let e = Expr::ELoop {
+            loc: loc(),
+            body: Box::new(Expr::EVoid { loc: loc() }),
+        };
+        assert!(ir_expr(&e).starts_with("([&]() { for (;;) {"));
+    }
+
+    #[test]
+    fn test_for_basic() {
+        let e = Expr::EFor {
+            loc: loc(),
+            var: "i".into(),
+            range: Box::new(var("range")),
+            body: Box::new(Expr::EVoid { loc: loc() }),
+        };
+        assert!(ir_expr(&e).starts_with("([&]() { for (const auto& i : range) {"));
+    }
+
+    // ===== array literal =====
+
+    #[test]
+    fn test_array_lit_empty() {
+        let e = Expr::EArrayLit { loc: loc(), values: vec![] };
+        assert_eq!(ir_expr(&e), "std::vector{}");
+    }
+
+    #[test]
+    fn test_array_lit_values() {
+        let e = Expr::EArrayLit { loc: loc(), values: vec![int(1), int(2)] };
+        assert_eq!(
+            ir_expr(&e),
+            "std::vector{static_cast<mvp_builtin_int>(1), static_cast<mvp_builtin_int>(2)}"
+        );
+    }
+
+    // ===== stmt =====
+
+    #[test]
+    fn test_stmt_let_mutable() {
+        let stmt = Stmt::SLet {
+            loc: loc(),
+            mutable: true,
+            name: "x".into(),
+            expr: Box::new(int(5)),
+        };
+        assert_eq!(ir_stmt(&stmt), "auto x = static_cast<mvp_builtin_int>(5);\n");
+    }
+
+    #[test]
+    fn test_stmt_let_immutable() {
+        let stmt = Stmt::SLet {
+            loc: loc(),
+            mutable: false,
+            name: "x".into(),
+            expr: Box::new(int(5)),
+        };
+        assert_eq!(ir_stmt(&stmt), "const auto x = static_cast<mvp_builtin_int>(5);\n");
+    }
+
+    #[test]
+    fn test_stmt_return() {
+        let stmt = Stmt::SReturn { loc: loc(), expr: Box::new(int(0)) };
+        assert_eq!(ir_stmt(&stmt), "return static_cast<mvp_builtin_int>(0);\n");
+    }
+
+    #[test]
+    fn test_stmt_expr() {
+        let stmt = Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(call("print", vec![], vec![Expr::EString { loc: loc(), value: "hi".into() }])),
+        };
+        assert_eq!(ir_stmt(&stmt), "mvp_print(mvp_builtin_string(\"hi\"));\n");
+    }
+
+    #[test]
+    fn test_stmt_assign() {
+        let stmt = Stmt::SAssign {
+            loc: loc(),
+            name: "x".into(),
+            expr: Box::new(int(10)),
+        };
+        assert_eq!(ir_stmt(&stmt), "x = static_cast<mvp_builtin_int>(10);\n");
+    }
+
+    #[test]
+    fn test_stmt_let_typed() {
+        let stmt = Stmt::SLetTyped {
+            loc: loc(),
+            name: "x".into(),
+            typ: Typ::TInt,
+            expr: Box::new(int(5)),
+        };
+        assert_eq!(ir_stmt(&stmt), "mvp_builtin_int x = static_cast<mvp_builtin_int>(5);\n");
+    }
+
+    // ===== enum defs =====
+
+    #[test]
+    fn test_enum_def() {
+        let def = Def::DEnum {
+            loc: loc(),
+            name: "Color".into(),
+            variants: vec![
+                EnumVariant { name: "Red".into(), payload: vec![] },
+                EnumVariant { name: "Green".into(), payload: vec![Typ::TInt] },
+            ],
+            type_params: vec![],
+        };
+        let out = ir_def(&def);
+        assert!(out.contains("struct Color"), "expected struct Color in:\n{}", out);
+        assert!(out.contains("__tag"), "expected __tag in:\n{}", out);
+        assert!(out.contains("Color_Green("), "expected Color_Green ctor in:\n{}", out);
+    }
+
+    #[test]
+    fn test_generic_enum_def() {
+        let def = Def::DEnum {
+            loc: loc(),
+            name: "Box".into(),
+            variants: vec![
+                EnumVariant { name: "Value".into(), payload: vec![Typ::TGenericParam { name: "T".into() }] },
+                EnumVariant { name: "Empty".into(), payload: vec![] },
+            ],
+            type_params: vec!["T".into()],
+        };
+        let out = ir_def(&def);
+        assert!(out.contains("template<typename T>"), "expected template header in:\n{}", out);
+        assert!(out.contains("struct Box"), "expected struct Box in:\n{}", out);
+        assert!(out.contains("inline Box<T> Box_Value(T __a0)"), "expected generic ctor in:\n{}", out);
+        assert!(out.contains("Box_Value_tag()"), "expected tag accessor in:\n{}", out);
+    }
+
+    #[test]
+    fn test_generic_enum_ctor_call() {
+        let e = call("Value", vec![Typ::TInt], vec![var("Box"), int(5)]);
+        assert_eq!(
+            ir_expr(&e),
+            "Box_Value<mvp_builtin_int>(static_cast<mvp_builtin_int>(5))"
         );
     }
 }
