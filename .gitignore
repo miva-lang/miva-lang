@@ -1,8 +1,11 @@
 tests/
+!miva/src/semantic/tests/
+!miva/src/typecheck/tests/
 .reasonix/
 .codewhale/
 .pi-chalin/
 build/
+!miva/src/commands/build/
 /target
 miva/build/
 stdlib/std

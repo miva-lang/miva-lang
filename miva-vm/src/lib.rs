@@ -1,3 +1,4 @@
+pub mod builtins;
 pub mod jit;
 pub mod opcode;
 pub mod value;

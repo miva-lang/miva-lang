@@ -38,11 +38,24 @@ impl Error {
 ///   |             ^^^^^^^
 /// ```
 pub fn format_error_with_source(err: &Error, file_path: &str, source: &str) -> String {
-    let mut output = String::new();
-    output.push_str(&format!("error[{}]: {}\n", err.code, err.message));
+    format_diagnostic_with_source("error", &err.code, &err.message, &err.loc, file_path, source)
+}
 
-    let line = err.loc.line;
-    let col = err.loc.col;
+/// Shared Rust-style rendering for errors and warnings: severity header,
+/// `--> file:line:col` pointer and a caret under the offending column.
+pub(crate) fn format_diagnostic_with_source(
+    severity: &str,
+    code: &str,
+    message: &str,
+    loc: &Loc,
+    file_path: &str,
+    source: &str,
+) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("{}[{}]: {}\n", severity, code, message));
+
+    let line = loc.line;
+    let col = loc.col;
 
     if line > 0 {
         output.push_str(&format!(" --> {}:{}:{}\n", file_path, line, col));
