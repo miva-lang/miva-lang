@@ -1,6 +1,6 @@
 #!/bin/bash
 # ── Miva 一键构建脚本 ──────────────────────────────────────────────
-# 构建前端 (miva-frontend-rs) + 编译器 (miva)
+# 构建整个 Cargo workspace（miva / miva-frontend-rs / miva-vm / miva-verify）
 #
 # 用法:
 #   ./build.sh               # debug 构建
@@ -27,7 +27,6 @@ for arg in "$@"; do
             exit 0
             ;;
         *)
-            # 其他参数直接传给 cargo
             CARGO_ARGS="$CARGO_ARGS $arg"
             ;;
     esac
@@ -36,36 +35,17 @@ done
 CARGO_FLAGS=""
 [ "$MODE" = "release" ] && CARGO_FLAGS="--release"
 
-# ── 前端: miva-frontend-rs ───────────────────────────────────────
-echo "━━━ Building frontend (miva-frontend-rs) [$MODE] ━━━"
-(cd miva-frontend-rs && cargo build $CARGO_FLAGS $CARGO_ARGS)
+echo "━━━ Building workspace [$MODE] ━━━"
+cargo build --workspace $CARGO_FLAGS $CARGO_ARGS
 
-# ── 编译器: miva ──────────────────────────────────────────────────
-echo "━━━ Building compiler (miva) [$MODE] ━━━"
-(cd miva && cargo build $CARGO_FLAGS)
-
-echo "━━━ Building vm (mvm) [$MODE] ━━━"
-(cd miva-vm && cargo build $CARGO_FLAGS)
-
-# ── 测试 ──────────────────────────────────────────────────────────
 if [ "$RUN_TESTS" = true ]; then
     echo ""
-    echo "━━━ Running frontend tests ━━━"
-    (cd miva-frontend-rs && cargo test $CARGO_FLAGS)
-
-    echo ""
-    echo "━━━ Running compiler tests ━━━"
-    (cd miva && cargo test $CARGO_FLAGS)
+    echo "━━━ Running workspace tests ━━━"
+    cargo test --workspace $CARGO_FLAGS
 fi
 
-# ── 完成 ──────────────────────────────────────────────────────────
 echo ""
 echo "✓ 构建完成 [$MODE]"
-echo "  前端: miva-frontend-rs/target/$MODE/miva-frontend"
-echo "  编译器: miva/target/$MODE/miva"
-
-if [ "$MODE" = "release" ]; then
-    echo ""
-    echo "  提示: 将 miva-frontend-rs/target/release/miva-frontend 加入 PATH"
-    echo "        miva 编译器的 frontend.rs 会自动查找它"
-fi
+echo "  编译器: target/$MODE/miva"
+echo "  前端:   target/$MODE/miva-frontend"
+echo "  虚拟机: target/$MODE/mvm"

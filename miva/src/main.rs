@@ -5,6 +5,7 @@ mod config;
 mod drop_desugar;
 mod droppable;
 mod error;
+#[cfg(test)]
 mod json_ast;
 mod macro_expand;
 mod magical;

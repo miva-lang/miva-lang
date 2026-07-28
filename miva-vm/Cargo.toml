@@ -9,7 +9,7 @@ name = "mvm"
 path = "src/main.rs"
 
 [dependencies]
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
 toml = "0.8"
 serde_yaml = "0.9"
 libloading = "0.8"

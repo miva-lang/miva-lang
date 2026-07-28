@@ -387,21 +387,6 @@ struct BlockFlow {
 fn analyze_block(body: &Expr, depth: usize, ret_type: &str) -> Option<BlockFlow> {
     match body {
         Expr::EBlock { stmts, result, .. } => {
-            let stmt_kinds: Vec<&str> = stmts.iter().map(|s| match s {
-                Stmt::SLet { .. } => "SLet",
-                Stmt::SLetTyped { .. } => "SLetTyped",
-                Stmt::SAssign { .. } => "SAssign",
-                Stmt::SFieldAssign { .. } => "SFieldAssign",
-                Stmt::SReturn { .. } => "SReturn",
-                Stmt::SExpr { .. } => "SExpr",
-                Stmt::SCIntro { .. } => "SCIntro",
-                Stmt::SEmpty { .. } => "SEmpty",
-            }).collect();
-            let debug_info = format!(
-                "analyze_block: ret_type={}, stmts.len={}, result.is_some={}, stmts={:?}\n",
-                ret_type, stmts.len(), result.is_some(), stmt_kinds
-            );
-            let _ = std::fs::write("/tmp/analyze_block_debug.txt", &debug_info);
             let inner = depth + 1;
             if ret_type == "mvp_builtin_unit" {
                 let stmt_strs: Vec<_> = stmts.iter().map(|s| cxx_stmt(inner, s, None)).collect();

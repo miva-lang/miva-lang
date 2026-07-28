@@ -5,7 +5,6 @@ use anyhow::Result;
 
 use super::{color, env, frontend, lock};
 use crate::config::Config;
-use crate::json_ast;
 
 pub fn exec(_verbose: bool) -> Result<()> {
     let config = Config::load().ok_or_else(|| anyhow::anyhow!("no miva.toml found"))?;
@@ -52,25 +51,13 @@ pub fn exec(_verbose: bool) -> Result<()> {
         anyhow::bail!("entry file not found: {}", entry);
     }
 
-    let (frontend, work_dir) =
-        frontend::find_frontend().ok_or_else(|| anyhow::anyhow!("miva-frontend not found"))?;
-
     let std_dir = env::get_std_include_dir();
 
     // resolved_path -> Vec<(resolved_child_path, original_import_path)>
     let mut graph: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let mut visited = HashSet::new();
 
-    build_graph(
-        &frontend,
-        &work_dir,
-        entry,
-        name,
-        &deps,
-        &std_dir,
-        &mut graph,
-        &mut visited,
-    )?;
+    build_graph(entry, name, &deps, &std_dir, &mut graph, &mut visited)?;
 
     println!();
     println!("{}", color::info("file dependency graph:"));
@@ -114,8 +101,6 @@ fn resolve_path(
 
 /// Recursively parse files and build the import graph.
 fn build_graph(
-    frontend: &str,
-    work_dir: &Option<String>,
     file: &str,
     name: &str,
     deps: &HashMap<String, String>,
@@ -134,23 +119,12 @@ fn build_graph(
         return Ok(());
     }
 
-    let json_str = match frontend::run_frontend(frontend, work_dir, &resolved) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "{}",
-                color::warn(&format!("failed to parse {}: {}", resolved, e))
-            );
-            graph.insert(resolved, vec![]);
-            return Ok(());
-        }
-    };
-    let ast = match json_ast::from_str(&json_str) {
+    let ast = match frontend::run_frontend(&resolved) {
         Ok(ast) => ast,
         Err(e) => {
             eprintln!(
                 "{}",
-                color::warn(&format!("invalid JSON AST from {}: {}", resolved, e))
+                color::warn(&format!("failed to parse {}: {}", resolved, e))
             );
             graph.insert(resolved, vec![]);
             return Ok(());
@@ -184,16 +158,7 @@ fn build_graph(
         if visited.contains(child_resolved) {
             continue;
         }
-        build_graph(
-            frontend,
-            work_dir,
-            child_import,
-            name,
-            deps,
-            std_dir,
-            graph,
-            visited,
-        )?;
+        build_graph(child_import, name, deps, std_dir, graph, visited)?;
     }
 
     Ok(())

@@ -12,7 +12,6 @@ use crate::codegen::Backend;
 use crate::commands::clean;
 use crate::config::Config;
 use crate::error;
-use crate::json_ast;
 use crate::macro_expand;
 use crate::magical;
 use crate::semantic;
@@ -89,9 +88,24 @@ fn which_cc() -> anyhow::Result<std::path::PathBuf> {
     ))
 }
 
+/// In-process AST cache: each source file is parsed at most once per build,
+/// shared by import scanning, macro collection, signature collection and
+/// per-file compilation.
+type AstCache = HashMap<String, crate::ast::AstFile>;
+
+fn parse_cached<'a>(
+    cache: &'a mut AstCache,
+    file: &str,
+) -> anyhow::Result<&'a crate::ast::AstFile> {
+    if !cache.contains_key(file) {
+        let ast = frontend::run_frontend(file)?;
+        cache.insert(file.to_string(), ast);
+    }
+    Ok(&cache[file])
+}
+
 fn collect_imports_with_graph(
-    frontend: &str,
-    work_dir: &Option<String>,
+    ast_cache: &mut AstCache,
     file: &str,
     visited: &mut HashSet<String>,
     cache_dir: &Path,
@@ -141,10 +155,7 @@ fn collect_imports_with_graph(
     let import_paths: Vec<String> = if let Some(deps_list) = deps_list {
         deps_list
     } else {
-        let json_str = frontend::run_frontend(frontend, work_dir, file)?;
-        let ast = json_ast::from_str(&json_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse JSON AST from {}: {}", file, e))?;
-
+        let ast = parse_cached(ast_cache, file)?;
         let paths: Vec<String> = ast
             .defs
             .iter()
@@ -161,9 +172,7 @@ fn collect_imports_with_graph(
 
     for path in &import_paths {
         graph.add_dependency(file, path);
-        collect_imports_with_graph(
-            frontend, work_dir, path, visited, cache_dir, std_path, graph, name, deps,
-        )?;
+        collect_imports_with_graph(ast_cache, path, visited, cache_dir, std_path, graph, name, deps)?;
     }
 
     Ok(())
@@ -171,24 +180,18 @@ fn collect_imports_with_graph(
 
 /// Collect all macro definitions from all source files.
 ///
-/// Runs the frontend on each file, parses the JSON AST, and extracts
-/// `DMacro` definitions into a shared `MacroTable`. This is called once
-/// before per-file compilation so that every file's macro expansion has
-/// access to macros defined anywhere in the project.
-fn collect_all_macros(
-    frontend: &str,
-    work_dir: &Option<String>,
-    files: &[String],
-) -> macro_expand::MacroTable {
+/// Parses each file via the in-process frontend and extracts `DMacro`
+/// definitions into a shared `MacroTable`. This is called once before
+/// per-file compilation so that every file's macro expansion has access
+/// to macros defined anywhere in the project.
+fn collect_all_macros(ast_cache: &mut AstCache, files: &[String]) -> macro_expand::MacroTable {
     let mut table = macro_expand::MacroTable::new();
     for file in files {
-        match frontend::run_frontend(frontend, work_dir, file) {
-            Ok(json_str) => {
-                if let Ok(ast) = crate::json_ast::from_str(&json_str) {
-                    let file_macros = macro_expand::collect_macros(&ast.defs);
-                    for (name, def) in file_macros {
-                        table.entry(name).or_insert(def);
-                    }
+        match parse_cached(ast_cache, file) {
+            Ok(ast) => {
+                let file_macros = macro_expand::collect_macros(&ast.defs);
+                for (name, def) in file_macros {
+                    table.entry(name).or_insert(def);
                 }
             }
             Err(e) => {
@@ -240,8 +243,7 @@ fn update_hash_cache(file: &str, cache_dir: &Path, cache_key: &str, backend: Bac
 }
 
 fn compile_file_to_src(
-    frontend: &str,
-    work_dir: &Option<String>,
+    ast_cache: &mut AstCache,
     file: &str,
     cache_dir: &Path,
     std_path: &str,
@@ -264,10 +266,7 @@ fn compile_file_to_src(
         return Ok((src_path, has_main));
     }
 
-    let json_str = frontend::run_frontend(frontend, work_dir, file)?;
-    // eprintln!("DBG JSON: {}", &json_str[..std::cmp::min(json_str.len(), 3000)]);
-    let ast = json_ast::from_str(&json_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse JSON AST from {}: {}", file, e))?;
+    let ast = parse_cached(ast_cache, file)?;
 
     let mut defs = macro_expand::expand_macros(&ast.defs, macro_table)?;
 
@@ -591,9 +590,6 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
         anyhow::bail!("entry file not found: {}", entry_file);
     }
 
-    let (frontend, frontend_work_dir) =
-        frontend::find_frontend().ok_or_else(|| anyhow::anyhow!("miva-frontend not found"))?;
-
     let std_include_dir = env::get_std_include_dir();
     let cache_dir = env::get_cache_dir_rel(release);
     let build_dir = env::get_build_dir_rel(release);
@@ -620,11 +616,11 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
     }
 
     // Build dependency graph while collecting source files
+    let mut ast_cache: AstCache = HashMap::new();
     let mut visited = HashSet::new();
     let mut graph = DependencyGraph::new();
     collect_imports_with_graph(
-        &frontend,
-        &frontend_work_dir,
+        &mut ast_cache,
         entry_file,
         &mut visited,
         &cache_dir,
@@ -652,7 +648,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
     }
 
     // Phase 0: Collect macro definitions from all files (cross-file availability)
-    let macro_table = collect_all_macros(&frontend, &frontend_work_dir, &files);
+    let macro_table = collect_all_macros(&mut ast_cache, &files);
     let macro_count = macro_table.len();
     if macro_count > 0 {
         eprintln!(
@@ -685,9 +681,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
     // way the frontend does (see `util::process_call_path` / import paths).
     let pkg_name = name.clone();
     for file in &files {
-        let json_str = frontend::run_frontend(&frontend, &frontend_work_dir, file)?;
-        let ast = json_ast::from_str(&json_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse JSON AST from {}: {}", file, e))?;
+        let ast = parse_cached(&mut ast_cache, file)?;
         let defs = macro_expand::expand_macros(&ast.defs, &macro_table)?;
         // Module name of this file (used to qualify its function signatures).
         let module_name = defs
@@ -821,8 +815,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
         let was_cached = !needs_rebuild_by_hash(file, &cache_dir, &cache_key, backend);
 
         let (src_path, has_main) = compile_file_to_src(
-            &frontend,
-            &frontend_work_dir,
+            &mut ast_cache,
             file,
             &cache_dir,
             &std_path_str,
@@ -890,9 +883,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
             // Collect all expanded defs from all files
             let mut all_defs: Vec<Def> = Vec::new();
             for file in &files {
-                let json_str = frontend::run_frontend(&frontend, &frontend_work_dir, file)?;
-                let ast = json_ast::from_str(&json_str)
-                    .map_err(|e| anyhow::anyhow!("Failed to parse JSON AST from {}: {}", file, e))?;
+                let ast = parse_cached(&mut ast_cache, file)?;
                 let defs = macro_expand::expand_macros(&ast.defs, &macro_table)?;
                 all_defs.extend(defs);
             }
@@ -973,9 +964,7 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
     if backend == Backend::Llvm {
         let mut all_defs: Vec<Def> = Vec::new();
         for file in &files {
-            let json_str = frontend::run_frontend(&frontend, &frontend_work_dir, file)?;
-            let ast = json_ast::from_str(&json_str)
-                .map_err(|e| anyhow::anyhow!("Failed to parse JSON AST from {}: {}", file, e))?;
+            let ast = parse_cached(&mut ast_cache, file)?;
             let defs = macro_expand::expand_macros(&ast.defs, &macro_table)?;
             all_defs.extend(defs);
         }

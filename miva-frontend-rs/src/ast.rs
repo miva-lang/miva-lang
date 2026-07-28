@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // ── Position ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Loc {
     pub line: i64,
     pub col: i64,
@@ -19,7 +19,7 @@ impl Loc {
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum Typ {
     #[serde(rename = "int")]
@@ -79,14 +79,14 @@ pub enum Typ {
     },
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FieldDef {
     pub name: String,
     #[serde(rename = "type")]
     pub typ: Typ,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
     pub payload: Vec<Typ>,
@@ -94,7 +94,7 @@ pub struct EnumVariant {
 
 // ── Operators ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum BinOp {
     #[serde(rename = "add")]
     Add,
@@ -124,7 +124,7 @@ pub enum BinOp {
 
 // ── Parameters ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum Param {
     #[serde(rename = "ref")]
@@ -143,7 +143,7 @@ pub enum Param {
 
 // ── Statements ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum Stmt {
     #[serde(rename = "let")]
@@ -188,7 +188,7 @@ pub enum Stmt {
 
 // ── Impl helpers ──────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ImplOp {
     #[serde(rename = "op_add")]
     ImAdd,
@@ -206,7 +206,7 @@ pub enum ImplOp {
     ImDrop,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImplExpr {
     pub op: ImplOp,
     pub func: String,
@@ -215,7 +215,7 @@ pub struct ImplExpr {
 
 // ── Expressions ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum Expr {
     #[serde(rename = "int")]
@@ -261,7 +261,7 @@ pub enum Expr {
         cond: Box<Expr>,
         #[serde(rename = "then")]
         then: Box<Expr>,
-        #[serde(rename = "else")]
+        #[serde(rename = "else", default)]
         else_: Option<Box<Expr>>,
     },
     #[serde(rename = "choose")]
@@ -347,26 +347,29 @@ pub enum Expr {
         params: Vec<Param>,
         #[serde(rename = "type")]
         ret: Typ,
+        #[serde(default)]
+        captures: Vec<(String, Typ)>,
         body: Box<Expr>,
     },
 }
 
 // ── Struct/When helpers ───────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ValueField {
     pub name: String,
     pub value: Expr,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WhenCase {
     pub when: Box<Expr>,
+    #[serde(default)]
     pub guard: Option<Box<Expr>>,
     pub then: Box<Expr>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MacroParam {
     pub name: String,
     #[serde(rename = "type")]
@@ -375,7 +378,7 @@ pub struct MacroParam {
 
 // ── Safety ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Safety {
     #[serde(rename = "safe")]
     Safe,
@@ -387,7 +390,7 @@ pub enum Safety {
 
 // ── Definitions ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum Def {
     #[serde(rename = "struct")]
@@ -484,7 +487,7 @@ pub enum Def {
 
 // ── Top-level AST ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AstFile {
     pub defs: Vec<Def>,
     pub files: Vec<String>,

@@ -1864,6 +1864,7 @@ impl<'input> Parser<'input> {
             loc: self.loc(start),
             params,
             ret,
+            captures: vec![],
             body: Box::new(body),
         })
     }
