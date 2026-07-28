@@ -50,7 +50,7 @@ fn main() {
         process::exit(1);
     }
 
-    match vm.run() {
+    match vm.run_on_vm_thread() {
         Ok(code) => {
             process::exit(code as i32);
         }

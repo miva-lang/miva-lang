@@ -217,7 +217,7 @@ pub struct HelperFunctions {
 pub extern "C" fn jit_push_int(ctx: *mut VmContext, val: i64) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        panic!("JIT stack overflow");
+        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -230,7 +230,7 @@ pub extern "C" fn jit_push_int(ctx: *mut VmContext, val: i64) {
 pub extern "C" fn jit_push_f64(ctx: *mut VmContext, val: f64) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        panic!("JIT stack overflow");
+        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -243,7 +243,7 @@ pub extern "C" fn jit_push_f64(ctx: *mut VmContext, val: f64) {
 pub extern "C" fn jit_push_bool(ctx: *mut VmContext, val: bool) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        panic!("JIT stack overflow");
+        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -256,7 +256,7 @@ pub extern "C" fn jit_push_bool(ctx: *mut VmContext, val: bool) {
 pub extern "C" fn jit_push_unit(ctx: *mut VmContext) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        panic!("JIT stack overflow");
+        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -269,7 +269,7 @@ pub extern "C" fn jit_push_unit(ctx: *mut VmContext) {
 pub extern "C" fn jit_push_null(ctx: *mut VmContext) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        panic!("JIT stack overflow");
+        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -282,10 +282,10 @@ pub extern "C" fn jit_push_null(ctx: *mut VmContext) {
 pub extern "C" fn jit_dup(ctx: *mut VmContext) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        panic!("JIT stack underflow");
+        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
     }
     if ctx.stack_len >= ctx.stack_cap {
-        panic!("JIT stack overflow");
+        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
     }
     unsafe {
         let src = ctx.stack_ptr.add(ctx.stack_len - 1);
@@ -299,14 +299,14 @@ pub extern "C" fn jit_dup(ctx: *mut VmContext) {
 pub extern "C" fn jit_pop_int(ctx: *mut VmContext) -> i64 {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        panic!("JIT stack underflow");
+        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
     }
     ctx.stack_len -= 1;
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
         match *slot {
             Value::Int(v) => v,
-            _ => panic!("jit_pop_int: expected Int"),
+            _ => { eprintln!("MVM JIT trap: jit_pop_int: expected Int"); std::process::abort(); }
         }
     }
 }
@@ -315,14 +315,14 @@ pub extern "C" fn jit_pop_int(ctx: *mut VmContext) -> i64 {
 pub extern "C" fn jit_pop_f64(ctx: *mut VmContext) -> f64 {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        panic!("JIT stack underflow");
+        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
     }
     ctx.stack_len -= 1;
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
         match *slot {
             Value::Float64(v) => v,
-            _ => panic!("jit_pop_f64: expected Float64"),
+            _ => { eprintln!("MVM JIT trap: jit_pop_f64: expected Float64"); std::process::abort(); }
         }
     }
 }
@@ -331,14 +331,14 @@ pub extern "C" fn jit_pop_f64(ctx: *mut VmContext) -> f64 {
 pub extern "C" fn jit_pop_bool(ctx: *mut VmContext) -> bool {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        panic!("JIT stack underflow");
+        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
     }
     ctx.stack_len -= 1;
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
         match *slot {
             Value::Bool(v) => v,
-            _ => panic!("jit_pop_bool: expected Bool"),
+            _ => { eprintln!("MVM JIT trap: jit_pop_bool: expected Bool"); std::process::abort(); }
         }
     }
 }
@@ -348,13 +348,13 @@ pub extern "C" fn jit_load_local_int(ctx: *mut VmContext, idx: u32) -> i64 {
     let ctx = unsafe { &mut *ctx };
     let idx = idx as usize;
     if idx >= ctx.locals_len {
-        panic!("jit_load_local_int: index {} out of bounds", idx);
+        { eprintln!("MVM JIT trap: jit_load_local_int: index {} out of bounds", idx); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.locals_ptr.add(idx);
         match *slot {
             Value::Int(v) => v,
-            _ => panic!("jit_load_local_int: expected Int at index {}", idx),
+            _ => { eprintln!("MVM JIT trap: jit_load_local_int: expected Int at index {}", idx); std::process::abort(); }
         }
     }
 }
@@ -364,7 +364,7 @@ pub extern "C" fn jit_store_local_int(ctx: *mut VmContext, idx: u32, val: i64) {
     let ctx = unsafe { &mut *ctx };
     let idx = idx as usize;
     if idx >= ctx.locals_len {
-        panic!("jit_store_local_int: index {} out of bounds", idx);
+        { eprintln!("MVM JIT trap: jit_store_local_int: index {} out of bounds", idx); std::process::abort(); }
     }
     unsafe {
         let slot = ctx.locals_ptr.add(idx);
