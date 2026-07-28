@@ -9,6 +9,7 @@ pub struct Parser<'input> {
     file_name: &'input str,
     peeked: Option<Option<(usize, Token<'input>, usize)>>,
     pending_type_args: Vec<Typ>,
+    last_offset: usize,
 }
 
 impl<'input> Parser<'input> {
@@ -19,7 +20,13 @@ impl<'input> Parser<'input> {
             file_name,
             peeked: None,
             pending_type_args: vec![],
+            last_offset: 0,
         }
+    }
+
+    /// Byte offset of the most recently observed token; used to locate errors.
+    pub fn last_offset(&self) -> usize {
+        self.last_offset
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -30,18 +37,25 @@ impl<'input> Parser<'input> {
     }
 
     fn advance(&mut self) -> Result<(usize, Token<'input>, usize), String> {
-        if let Some(peeked) = self.peeked.take() {
+        let next = if let Some(peeked) = self.peeked.take() {
             peeked.ok_or_else(|| "unexpected EOF".to_string())
         } else {
             self.lexer
                 .next()
                 .unwrap_or(Err("unexpected EOF".to_string()))
+        };
+        if let Ok((start, _, _)) = &next {
+            self.last_offset = *start;
         }
+        next
     }
 
     fn peek(&mut self) -> Result<Option<&(usize, Token<'input>, usize)>, String> {
         if self.peeked.is_none() {
             self.peeked = Some(self.lexer.next().transpose()?);
+        }
+        if let Some(Some((start, _, _))) = &self.peeked {
+            self.last_offset = *start;
         }
         Ok(self.peeked.as_ref().unwrap().as_ref())
     }
@@ -2387,6 +2401,7 @@ impl<'input> Clone for Parser<'input> {
             file_name: self.file_name,
             peeked: self.peeked.clone(),
             pending_type_args: self.pending_type_args.clone(),
+            last_offset: self.last_offset,
         }
     }
 }

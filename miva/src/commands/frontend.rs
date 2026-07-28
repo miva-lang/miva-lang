@@ -44,8 +44,20 @@ pub fn find_mvm() -> Option<PathBuf> {
 pub fn run_frontend(input: &str) -> anyhow::Result<crate::ast::AstFile> {
     let source = std::fs::read_to_string(input)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {}", input, e))?;
-    let defs = miva_frontend::parse(&source, input)
-        .map_err(|e| anyhow::anyhow!("miva-frontend failed:\n{}", e))?;
+    let defs = miva_frontend::parse(&source, input).map_err(|e| {
+        let err = crate::error::Error {
+            code: "E0000".to_string(),
+            message: e.message,
+            loc: crate::ast::Loc {
+                line: e.line,
+                col: e.col,
+            },
+        };
+        anyhow::anyhow!(
+            "{}",
+            crate::error::format_error_with_source(&err, input, &source)
+        )
+    })?;
     Ok(crate::ast::AstFile {
         defs,
         files: vec![input.to_string()],

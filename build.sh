@@ -1,6 +1,6 @@
 #!/bin/bash
 # ── Miva 一键构建脚本 ──────────────────────────────────────────────
-# 构建整个 Cargo workspace（miva / miva-frontend-rs / miva-vm / miva-verify）
+# 构建整个 Cargo workspace（miva / miva-frontend-rs / miva-vm）
 #
 # 用法:
 #   ./build.sh               # debug 构建

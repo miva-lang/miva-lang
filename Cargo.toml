@@ -1,5 +1,5 @@
 [workspace]
-members = ["miva", "miva-frontend-rs", "miva-vm", "miva-verify"]
+members = ["miva", "miva-frontend-rs", "miva-vm"]
 resolver = "2"
 
 [workspace.dependencies]

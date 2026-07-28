@@ -1,7 +1,10 @@
 pub mod ast;
+pub mod error;
 pub mod lexer;
 pub mod parser;
 pub mod util;
+
+pub use error::ParseError;
 
 use lexer::Lexer;
 use parser::Parser;
@@ -9,20 +12,33 @@ use parser::Parser;
 /// Parse Miva source text into a list of definitions.
 ///
 /// `file_name` is used for error reporting and is stored in the output JSON.
-pub fn parse(input: &str, file_name: &str) -> Result<Vec<ast::Def>, String> {
+pub fn parse(input: &str, file_name: &str) -> Result<Vec<ast::Def>, ParseError> {
     let lexer = Lexer::new(input);
     let mut parser = Parser::new(lexer, input, file_name);
-    parser.parse_program()
+    parser.parse_program().map_err(|message| {
+        let (line, col) = lexer::offset_to_line_col(input, parser.last_offset());
+        ParseError {
+            file: file_name.to_string(),
+            line: line as i64,
+            col: col as i64,
+            message,
+        }
+    })
 }
 
 /// Parse and serialize to JSON string.
-pub fn parse_to_json(input: &str, file_name: &str) -> Result<String, String> {
+pub fn parse_to_json(input: &str, file_name: &str) -> Result<String, ParseError> {
     let defs = parse(input, file_name)?;
     let ast_file = ast::AstFile {
         defs,
         files: vec![file_name.to_string()],
     };
-    serde_json::to_string_pretty(&ast_file).map_err(|e| format!("JSON error: {}", e))
+    serde_json::to_string_pretty(&ast_file).map_err(|e| ParseError {
+        file: file_name.to_string(),
+        line: 0,
+        col: 0,
+        message: format!("JSON error: {}", e),
+    })
 }
 
 #[cfg(test)]

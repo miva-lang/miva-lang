@@ -1,6 +1,7 @@
 .reasonix/
 .codewhale/
 .pi-chalin/
+.qoder/
 build/
 !miva/src/commands/build/
 /target
