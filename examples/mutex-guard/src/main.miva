@@ -1,0 +1,50 @@
+module main;
+
+import "std/mutex";
+
+// ── Basic guard usage ─────────────────────────────────────────────────────────
+unsafe basic = () => {
+  let m std.mutex.Mutex = std.mutex.create();
+  let g std.mutex.MutexGuard = std.mutex.guard(m);
+  printlns!("basic: locked via guard");
+  // g auto-unlocks here on drop
+  std.mutex.free(m);
+  printlns!("basic: freed mutex");
+}
+
+// ── Guard in nested block — scope exit triggers unlock ────────────────────────
+unsafe blocky = () => {
+  let m std.mutex.Mutex = std.mutex.create();
+  {
+    let g std.mutex.MutexGuard = std.mutex.guard(m);
+    printlns!("blocky: guard acquired lock inside block");
+    // g unlocks here when block ends
+  };
+  printlns!("blocky: block ended, guard dropped");
+  std.mutex.free(m);
+  printlns!("blocky: mutex freed");
+}
+
+// ── Sequential lock/unlock with independent guards ────────────────────────────
+unsafe sequential = () => {
+  let m1 std.mutex.Mutex = std.mutex.create();
+  let m2 std.mutex.Mutex = std.mutex.create();
+  {
+    let g1 std.mutex.MutexGuard = std.mutex.guard(m1);
+    printlns!("sequential: first mutex locked");
+  };
+  {
+    let g2 std.mutex.MutexGuard = std.mutex.guard(m2);
+    printlns!("sequential: second mutex locked");
+  };
+  std.mutex.free(m1);
+  std.mutex.free(m2);
+  printlns!("sequential: both freed");
+}
+
+unsafe main = () => {
+  basic();
+  blocky();
+  sequential();
+  printlns!("all guard demos passed");
+}

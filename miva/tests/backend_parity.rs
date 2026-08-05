@@ -135,3 +135,8 @@ fn parity_generic_enum() {
 fn parity_drop_system() {
     assert_backend_parity("drop-system");
 }
+
+#[test]
+fn parity_mutex_guard() {
+    assert_backend_parity("mutex-guard");
+}

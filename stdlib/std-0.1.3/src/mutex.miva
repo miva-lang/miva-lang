@@ -18,8 +18,23 @@ module std.mutex;
 //
 // Note: `std::mutex` is NOT reentrant — locking the same mutex twice from the
 // same thread causes a deadlock.
+//
+// ── MutexGuard (RAII lock self-unlocking) ─────────────────────────────────────
+//
+// `MutexGuard` is a RAII wrapper around a locked mutex. It acquires the lock
+// via `guard(m)` and releases it automatically when dropped (end of scope or
+// explicit `drop(g)`). This eliminates the risk of forgetting to unlock and
+// handles all exit paths (returns, breaks, continues) without manual effort.
+//
+// `MutexGuard` is move-only because it contains a `ptrany` field. Copying a
+// guard would cause double-unlock on drop — the compiler prevents this via
+// the move-check (E0001).
 
 Mutex = struct {
+    handle: ptrany,
+}
+
+MutexGuard = struct {
     handle: ptrany,
 }
 
@@ -41,8 +56,27 @@ unsafe free = (ref m: Mutex) => {
   mutex_free(m.handle);
 }
 
+// Create a `MutexGuard` that locks `m` and auto-unlocks on drop.
+// `m` is borrowed (not consumed), so the same mutex can be guarded multiple times.
+unsafe guard = (ref m: Mutex): MutexGuard => {
+  mutex_lock(m.handle);
+  let g MutexGuard = struct MutexGuard { handle = m.handle };
+  return g;
+}
+
+// Drop function for `MutexGuard`: unlocks the underlying mutex.
+unsafe drop_guard = (ref self: MutexGuard) => {
+  mutex_unlock(self.handle);
+}
+
+impl MutexGuard {
+  op_drop drop_guard,
+}
+
 export Mutex;
+export MutexGuard;
 export create;
 export lock;
 export unlock;
 export free;
+export guard;
