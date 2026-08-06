@@ -3,7 +3,12 @@ pub struct Args {
     pub input: String,
     #[arg(short)]
     pub output: Option<String>,
-    #[arg(short = 'b', long, default_value = "cxx", help = "Backend to use: cxx, llvm, or mvm")]
+    #[arg(
+        short = 'b',
+        long,
+        default_value = "cxx",
+        help = "Backend to use: cxx, llvm, or mvm"
+    )]
     pub backend: String,
 }
 

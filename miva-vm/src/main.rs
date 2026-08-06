@@ -2,8 +2,8 @@ use std::env;
 use std::fs;
 use std::process;
 
-use miva_vm::MvmProgram;
 use miva_vm::Mvm;
+use miva_vm::MvmProgram;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -32,11 +32,20 @@ fn main() {
     };
 
     if debug {
-        eprintln!("Loaded program with {} strings, {} functions",
-            program.strings.len(), program.functions.len());
+        eprintln!(
+            "Loaded program with {} strings, {} functions",
+            program.strings.len(),
+            program.functions.len()
+        );
         for (i, f) in program.functions.iter().enumerate() {
-            eprintln!("  func[{}]: {} (arity={}, locals={}, code_size={})",
-                i, f.name(&program.strings), f.arity, f.locals, f.code.len());
+            eprintln!(
+                "  func[{}]: {} (arity={}, locals={}, code_size={})",
+                i,
+                f.name(&program.strings),
+                f.arity,
+                f.locals,
+                f.code.len()
+            );
         }
     }
 

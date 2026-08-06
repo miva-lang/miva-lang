@@ -146,10 +146,10 @@ fn test_user_function_overrides_builtin() {
         .filter(|e| e.code == "E0009" && e.message.contains("unknown function"))
         .collect();
     assert!(
-         unknown_errs.is_empty(),
-         "user-defined 'print' should override builtin, errors: {:?}",
-         errs
-     );
+        unknown_errs.is_empty(),
+        "user-defined 'print' should override builtin, errors: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -195,15 +195,29 @@ fn test_clone_prevents_move_error() {
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "clone should prevent move error, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "clone should prevent move error, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_multiple_unsafe_calls_from_safe() {
     let defs = vec![
         make_module("test"),
-        make_func("unsafe_fn1", vec![], Expr::EVoid { loc: loc() }, Safety::Unsafe),
-        make_func("unsafe_fn2", vec![], Expr::EVoid { loc: loc() }, Safety::Unsafe),
+        make_func(
+            "unsafe_fn1",
+            vec![],
+            Expr::EVoid { loc: loc() },
+            Safety::Unsafe,
+        ),
+        make_func(
+            "unsafe_fn2",
+            vec![],
+            Expr::EVoid { loc: loc() },
+            Safety::Unsafe,
+        ),
         make_func(
             "main",
             vec![],
@@ -235,7 +249,9 @@ fn test_multiple_unsafe_calls_from_safe() {
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0009" && e.message.contains("unsafe function")));
+    assert!(errs
+        .iter()
+        .any(|e| e.code == "E0009" && e.message.contains("unsafe function")));
 }
 
 #[test]
@@ -252,7 +268,10 @@ fn test_nested_block_scoping() {
                         loc: loc(),
                         mutable: false,
                         name: "x".to_string(),
-                        expr: Box::new(Expr::EInt { loc: loc(), value: 1 }),
+                        expr: Box::new(Expr::EInt {
+                            loc: loc(),
+                            value: 1,
+                        }),
                     },
                     Stmt::SExpr {
                         loc: loc(),
@@ -262,7 +281,10 @@ fn test_nested_block_scoping() {
                                 loc: loc(),
                                 mutable: false,
                                 name: "x".to_string(),
-                                expr: Box::new(Expr::EInt { loc: loc(), value: 2 }),
+                                expr: Box::new(Expr::EInt {
+                                    loc: loc(),
+                                    value: 2,
+                                }),
                             }],
                             result: Some(Box::new(Expr::EVar {
                                 loc: loc(),
@@ -280,7 +302,11 @@ fn test_nested_block_scoping() {
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "nested block should shadow outer var, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "nested block should shadow outer var, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -295,7 +321,10 @@ fn test_move_in_different_branches() {
             }],
             Expr::EIf {
                 loc: loc(),
-                cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                cond: Box::new(Expr::EBool {
+                    loc: loc(),
+                    value: true,
+                }),
                 then: Box::new(Expr::EMove {
                     loc: loc(),
                     name: "x".to_string(),
@@ -309,7 +338,11 @@ fn test_move_in_different_branches() {
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "move in both branches should be ok, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "move in both branches should be ok, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -319,8 +352,14 @@ fn test_struct_field_access_valid() {
         make_struct(
             "Point",
             vec![
-                FieldDef { name: "x".to_string(), typ: Typ::TInt },
-                FieldDef { name: "y".to_string(), typ: Typ::TInt },
+                FieldDef {
+                    name: "x".to_string(),
+                    typ: Typ::TInt,
+                },
+                FieldDef {
+                    name: "y".to_string(),
+                    typ: Typ::TInt,
+                },
             ],
         ),
         make_func(
@@ -334,11 +373,17 @@ fn test_struct_field_access_valid() {
                     fields: vec![
                         ValueField {
                             name: "x".to_string(),
-                            value: Expr::EInt { loc: loc(), value: 1 },
+                            value: Expr::EInt {
+                                loc: loc(),
+                                value: 1,
+                            },
                         },
                         ValueField {
                             name: "y".to_string(),
-                            value: Expr::EInt { loc: loc(), value: 2 },
+                            value: Expr::EInt {
+                                loc: loc(),
+                                value: 2,
+                            },
                         },
                     ],
                     type_args: vec![],
@@ -349,7 +394,11 @@ fn test_struct_field_access_valid() {
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "valid field access should have no errors, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "valid field access should have no errors, got: {:?}",
+        errs
+    );
 }
 
 // ── droppable move-only enforcement ─────────────────────────────
@@ -374,7 +423,13 @@ fn file_lit() -> Expr {
 fn drop_defs() -> Vec<Def> {
     vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "id".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "id".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         Def::DImpl {
             loc: loc(),
             struct_name: "File".to_string(),
@@ -386,7 +441,10 @@ fn drop_defs() -> Vec<Def> {
         },
         make_func(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: file_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_typ(),
+            }],
             Expr::EVoid { loc: loc() },
             Safety::Safe,
         ),
@@ -426,7 +484,10 @@ fn test_droppable_second_use_after_implicit_move_errors() {
                     loc: loc(),
                     name: "b".to_string(),
                     typ: file_typ(),
-                    expr: Box::new(Expr::EVar { loc: loc(), name: "a".to_string() }),
+                    expr: Box::new(Expr::EVar {
+                        loc: loc(),
+                        name: "a".to_string(),
+                    }),
                 },
                 use_var("a"),
             ],
@@ -435,7 +496,11 @@ fn test_droppable_second_use_after_implicit_move_errors() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "expected E0001, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "expected E0001, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -452,7 +517,10 @@ fn test_droppable_clone_allowed() {
                     loc: loc(),
                     name: "b".to_string(),
                     typ: file_typ(),
-                    expr: Box::new(Expr::EClone { loc: loc(), name: "a".to_string() }),
+                    expr: Box::new(Expr::EClone {
+                        loc: loc(),
+                        name: "a".to_string(),
+                    }),
                 },
                 use_var("a"),
             ],
@@ -461,7 +529,11 @@ fn test_droppable_clone_allowed() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "clone of droppable should be allowed, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "clone of droppable should be allowed, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -469,13 +541,19 @@ fn test_droppable_call_arg_moves_ref_arg_does_not() {
     let mut defs = drop_defs();
     defs.push(make_func(
         "consume",
-        vec![Param::POwn { name: "f".to_string(), typ: file_typ() }],
+        vec![Param::POwn {
+            name: "f".to_string(),
+            typ: file_typ(),
+        }],
         Expr::EVoid { loc: loc() },
         Safety::Safe,
     ));
     defs.push(make_func(
         "inspect",
-        vec![Param::PRef { name: "f".to_string(), typ: file_typ() }],
+        vec![Param::PRef {
+            name: "f".to_string(),
+            typ: file_typ(),
+        }],
         Expr::EVoid { loc: loc() },
         Safety::Safe,
     ));
@@ -493,7 +571,10 @@ fn test_droppable_call_arg_moves_ref_arg_does_not() {
                         loc: loc(),
                         name: "inspect".to_string(),
                         type_args: vec![],
-                        args: vec![Expr::EVar { loc: loc(), name: "a".to_string() }],
+                        args: vec![Expr::EVar {
+                            loc: loc(),
+                            name: "a".to_string(),
+                        }],
                     }),
                 },
                 use_var("a"),
@@ -516,7 +597,10 @@ fn test_droppable_call_arg_moves_ref_arg_does_not() {
                         loc: loc(),
                         name: "consume".to_string(),
                         type_args: vec![],
-                        args: vec![Expr::EVar { loc: loc(), name: "b".to_string() }],
+                        args: vec![Expr::EVar {
+                            loc: loc(),
+                            name: "b".to_string(),
+                        }],
                     }),
                 },
                 use_var("b"),
@@ -526,8 +610,17 @@ fn test_droppable_call_arg_moves_ref_arg_does_not() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "expected E0001 for own-arg reuse, got: {:?}", errs);
-    assert_eq!(errs.iter().filter(|e| e.code == "E0001").count(), 1, "ref arg must not move, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "expected E0001 for own-arg reuse, got: {:?}",
+        errs
+    );
+    assert_eq!(
+        errs.iter().filter(|e| e.code == "E0001").count(),
+        1,
+        "ref arg must not move, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -544,12 +637,18 @@ fn test_droppable_branch_inconsistent_move_errors() {
                     loc: loc(),
                     expr: Box::new(Expr::EIf {
                         loc: loc(),
-                        cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                        cond: Box::new(Expr::EBool {
+                            loc: loc(),
+                            value: true,
+                        }),
                         then: Box::new(Expr::EBlock {
                             loc: loc(),
                             stmts: vec![Stmt::SExpr {
                                 loc: loc(),
-                                expr: Box::new(Expr::EMove { loc: loc(), name: "a".to_string() }),
+                                expr: Box::new(Expr::EMove {
+                                    loc: loc(),
+                                    name: "a".to_string(),
+                                }),
                             }],
                             result: None,
                         }),
@@ -562,7 +661,11 @@ fn test_droppable_branch_inconsistent_move_errors() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0033"), "expected E0033, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0033"),
+        "expected E0033, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -571,7 +674,10 @@ fn test_droppable_both_branches_move_ok() {
         loc: loc(),
         stmts: vec![Stmt::SExpr {
             loc: loc(),
-            expr: Box::new(Expr::EMove { loc: loc(), name: "a".to_string() }),
+            expr: Box::new(Expr::EMove {
+                loc: loc(),
+                name: "a".to_string(),
+            }),
         }],
         result: None,
     };
@@ -587,7 +693,10 @@ fn test_droppable_both_branches_move_ok() {
                     loc: loc(),
                     expr: Box::new(Expr::EIf {
                         loc: loc(),
-                        cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                        cond: Box::new(Expr::EBool {
+                            loc: loc(),
+                            value: true,
+                        }),
                         then: Box::new(move_a_block.clone()),
                         else_: Some(Box::new(move_a_block)),
                     }),
@@ -598,14 +707,24 @@ fn test_droppable_both_branches_move_ok() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(!errs.iter().any(|e| e.code == "E0033"), "both branches move is legal, got: {:?}", errs);
+    assert!(
+        !errs.iter().any(|e| e.code == "E0033"),
+        "both branches move is legal, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_non_droppable_struct_second_use_still_allowed() {
     let defs = vec![
         make_module("test"),
-        make_struct("Point", vec![FieldDef { name: "x".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "Point",
+            vec![FieldDef {
+                name: "x".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_func(
             "main",
             vec![],
@@ -625,7 +744,10 @@ fn test_non_droppable_struct_second_use_still_allowed() {
                             name: "Point".to_string(),
                             fields: vec![ValueField {
                                 name: "x".to_string(),
-                                value: Expr::EInt { loc: loc(), value: 1 },
+                                value: Expr::EInt {
+                                    loc: loc(),
+                                    value: 1,
+                                },
                             }],
                             type_args: vec![],
                         }),
@@ -638,7 +760,10 @@ fn test_non_droppable_struct_second_use_still_allowed() {
                             fields: vec![],
                             type_args: vec![],
                         },
-                        expr: Box::new(Expr::EVar { loc: loc(), name: "p".to_string() }),
+                        expr: Box::new(Expr::EVar {
+                            loc: loc(),
+                            name: "p".to_string(),
+                        }),
                     },
                     use_var("p"),
                 ],
@@ -648,7 +773,11 @@ fn test_non_droppable_struct_second_use_still_allowed() {
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "non-droppable struct copy must stay legal, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "non-droppable struct copy must stay legal, got: {:?}",
+        errs
+    );
 }
 
 // ── builtin drop(x) ─────────────────────────────────────────────
@@ -660,7 +789,10 @@ fn drop_call(var: &str) -> Stmt {
             loc: loc(),
             name: "drop".to_string(),
             type_args: vec![],
-            args: vec![Expr::EVar { loc: loc(), name: var.to_string() }],
+            args: vec![Expr::EVar {
+                loc: loc(),
+                name: var.to_string(),
+            }],
         }),
     }
 }
@@ -679,7 +811,11 @@ fn test_drop_builtin_marks_var_moved() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "use after drop(a) should be E0001, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "use after drop(a) should be E0001, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -696,7 +832,11 @@ fn test_drop_builtin_valid_use_no_errors() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "valid drop(a) should have no errors, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "valid drop(a) should have no errors, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -712,7 +852,10 @@ fn test_drop_builtin_on_non_droppable_is_e0035() {
                     loc: loc(),
                     mutable: false,
                     name: "n".to_string(),
-                    expr: Box::new(Expr::EInt { loc: loc(), value: 1 }),
+                    expr: Box::new(Expr::EInt {
+                        loc: loc(),
+                        value: 1,
+                    }),
                 },
                 drop_call("n"),
             ],
@@ -721,7 +864,11 @@ fn test_drop_builtin_on_non_droppable_is_e0035() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0035"), "drop on non-droppable should be E0035, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0035"),
+        "drop on non-droppable should be E0035, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -746,7 +893,11 @@ fn test_drop_builtin_on_complex_expr_is_e0035() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0035"), "drop on non-variable should be E0035, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0035"),
+        "drop on non-variable should be E0035, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -754,7 +905,10 @@ fn test_drop_in_one_branch_move_in_other_is_consistent() {
     let mut defs = drop_defs();
     defs.push(make_func(
         "consume",
-        vec![Param::POwn { name: "f".to_string(), typ: file_typ() }],
+        vec![Param::POwn {
+            name: "f".to_string(),
+            typ: file_typ(),
+        }],
         Expr::EVoid { loc: loc() },
         Safety::Safe,
     ));
@@ -769,7 +923,10 @@ fn test_drop_in_one_branch_move_in_other_is_consistent() {
                     loc: loc(),
                     expr: Box::new(Expr::EIf {
                         loc: loc(),
-                        cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+                        cond: Box::new(Expr::EBool {
+                            loc: loc(),
+                            value: true,
+                        }),
                         then: Box::new(Expr::EBlock {
                             loc: loc(),
                             stmts: vec![drop_call("a")],
@@ -783,7 +940,10 @@ fn test_drop_in_one_branch_move_in_other_is_consistent() {
                                     loc: loc(),
                                     name: "consume".to_string(),
                                     type_args: vec![],
-                                    args: vec![Expr::EMove { loc: loc(), name: "a".to_string() }],
+                                    args: vec![Expr::EMove {
+                                        loc: loc(),
+                                        name: "a".to_string(),
+                                    }],
                                 }),
                             }],
                             result: None,
@@ -796,7 +956,11 @@ fn test_drop_in_one_branch_move_in_other_is_consistent() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(!errs.iter().any(|e| e.code == "E0033"), "drop in one branch + move in other should be consistent, got: {:?}", errs);
+    assert!(
+        !errs.iter().any(|e| e.code == "E0033"),
+        "drop in one branch + move in other should be consistent, got: {:?}",
+        errs
+    );
 }
 
 // ── infectious droppability (recursive glue) ────────────────────
@@ -814,7 +978,10 @@ fn glue_defs() -> Vec<Def> {
     let mut defs = drop_defs();
     defs.push(make_struct(
         "Handle",
-        vec![FieldDef { name: "f".to_string(), typ: file_typ() }],
+        vec![FieldDef {
+            name: "f".to_string(),
+            typ: file_typ(),
+        }],
     ));
     defs
 }
@@ -838,7 +1005,10 @@ fn test_glue_struct_is_move_only() {
                         name: "Handle".to_string(),
                         fields: vec![ValueField {
                             name: "f".to_string(),
-                            value: Expr::EMove { loc: loc(), name: "a".to_string() },
+                            value: Expr::EMove {
+                                loc: loc(),
+                                name: "a".to_string(),
+                            },
                         }],
                         type_args: vec![],
                     }),
@@ -847,7 +1017,10 @@ fn test_glue_struct_is_move_only() {
                     loc: loc(),
                     name: "h2".to_string(),
                     typ: handle_typ(),
-                    expr: Box::new(Expr::EVar { loc: loc(), name: "h".to_string() }),
+                    expr: Box::new(Expr::EVar {
+                        loc: loc(),
+                        name: "h".to_string(),
+                    }),
                 },
                 use_var("h"),
             ],
@@ -856,7 +1029,11 @@ fn test_glue_struct_is_move_only() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "glue struct must be move-only, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "glue struct must be move-only, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -890,7 +1067,10 @@ fn test_deeply_nested_glue_struct_is_move_only() {
                         name: "Handle".to_string(),
                         fields: vec![ValueField {
                             name: "f".to_string(),
-                            value: Expr::EMove { loc: loc(), name: "a".to_string() },
+                            value: Expr::EMove {
+                                loc: loc(),
+                                name: "a".to_string(),
+                            },
                         }],
                         type_args: vec![],
                     }),
@@ -904,7 +1084,10 @@ fn test_deeply_nested_glue_struct_is_move_only() {
                         name: "Outer".to_string(),
                         fields: vec![ValueField {
                             name: "h".to_string(),
-                            value: Expr::EMove { loc: loc(), name: "h".to_string() },
+                            value: Expr::EMove {
+                                loc: loc(),
+                                name: "h".to_string(),
+                            },
                         }],
                         type_args: vec![],
                     }),
@@ -913,7 +1096,10 @@ fn test_deeply_nested_glue_struct_is_move_only() {
                     loc: loc(),
                     name: "o2".to_string(),
                     typ: outer_typ,
-                    expr: Box::new(Expr::EVar { loc: loc(), name: "o".to_string() }),
+                    expr: Box::new(Expr::EVar {
+                        loc: loc(),
+                        name: "o".to_string(),
+                    }),
                 },
                 use_var("o"),
             ],
@@ -922,7 +1108,11 @@ fn test_deeply_nested_glue_struct_is_move_only() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "nested glue struct must be move-only, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "nested glue struct must be move-only, got: {:?}",
+        errs
+    );
 }
 
 // ── enum/array infection + generic-argument ban ─────────────────
@@ -933,14 +1123,24 @@ fn slot_enum() -> Def {
         name: "Slot".to_string(),
         type_params: vec![],
         variants: vec![
-            EnumVariant { name: "Full".to_string(), payload: vec![file_typ()] },
-            EnumVariant { name: "Empty".to_string(), payload: vec![] },
+            EnumVariant {
+                name: "Full".to_string(),
+                payload: vec![file_typ()],
+            },
+            EnumVariant {
+                name: "Empty".to_string(),
+                payload: vec![],
+            },
         ],
     }
 }
 
 fn slot_typ() -> Typ {
-    Typ::TStruct { name: "Slot".to_string(), fields: vec![], type_args: vec![] }
+    Typ::TStruct {
+        name: "Slot".to_string(),
+        fields: vec![],
+        type_args: vec![],
+    }
 }
 
 #[test]
@@ -962,14 +1162,20 @@ fn test_enum_with_droppable_payload_is_move_only() {
                         loc: loc(),
                         name: "Slot.Full".to_string(),
                         type_args: vec![],
-                        args: vec![Expr::EMove { loc: loc(), name: "a".to_string() }],
+                        args: vec![Expr::EMove {
+                            loc: loc(),
+                            name: "a".to_string(),
+                        }],
                     }),
                 },
                 Stmt::SLetTyped {
                     loc: loc(),
                     name: "s2".to_string(),
                     typ: slot_typ(),
-                    expr: Box::new(Expr::EVar { loc: loc(), name: "s".to_string() }),
+                    expr: Box::new(Expr::EVar {
+                        loc: loc(),
+                        name: "s".to_string(),
+                    }),
                 },
                 use_var("s"),
             ],
@@ -978,7 +1184,11 @@ fn test_enum_with_droppable_payload_is_move_only() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "enum with droppable payload must be move-only, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "enum with droppable payload must be move-only, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -994,17 +1204,27 @@ fn test_array_of_droppable_is_move_only() {
                 Stmt::SLetTyped {
                     loc: loc(),
                     name: "arr".to_string(),
-                    typ: Typ::TArray { of: Box::new(file_typ()) },
+                    typ: Typ::TArray {
+                        of: Box::new(file_typ()),
+                    },
                     expr: Box::new(Expr::EArrayLit {
                         loc: loc(),
-                        values: vec![Expr::EMove { loc: loc(), name: "a".to_string() }],
+                        values: vec![Expr::EMove {
+                            loc: loc(),
+                            name: "a".to_string(),
+                        }],
                     }),
                 },
                 Stmt::SLetTyped {
                     loc: loc(),
                     name: "arr2".to_string(),
-                    typ: Typ::TArray { of: Box::new(file_typ()) },
-                    expr: Box::new(Expr::EVar { loc: loc(), name: "arr".to_string() }),
+                    typ: Typ::TArray {
+                        of: Box::new(file_typ()),
+                    },
+                    expr: Box::new(Expr::EVar {
+                        loc: loc(),
+                        name: "arr".to_string(),
+                    }),
                 },
                 use_var("arr"),
             ],
@@ -1013,7 +1233,11 @@ fn test_array_of_droppable_is_move_only() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0001"), "array of droppable must be move-only, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0001"),
+        "array of droppable must be move-only, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -1024,14 +1248,20 @@ fn test_future_of_droppable_return_is_e0036() {
         name: "task".to_string(),
         type_params: vec![],
         params: vec![],
-        returns: Some(Typ::TFuture { of: Box::new(file_typ()) }),
+        returns: Some(Typ::TFuture {
+            of: Box::new(file_typ()),
+        }),
         body: Box::new(Expr::EVoid { loc: loc() }),
         safety: Safety::Safe,
         is_async: true,
         type_bounds: vec![],
     });
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0036"), "future[File] must be rejected, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0036"),
+        "future[File] must be rejected, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -1042,14 +1272,20 @@ fn test_future_of_non_droppable_return_is_ok() {
         name: "task".to_string(),
         type_params: vec![],
         params: vec![],
-        returns: Some(Typ::TFuture { of: Box::new(Typ::TInt) }),
+        returns: Some(Typ::TFuture {
+            of: Box::new(Typ::TInt),
+        }),
         body: Box::new(Expr::EVoid { loc: loc() }),
         safety: Safety::Safe,
         is_async: true,
         type_bounds: vec![],
     });
     let errs = check_program(&defs);
-    assert!(!errs.iter().any(|e| e.code == "E0036"), "future[int] must be fine, got: {:?}", errs);
+    assert!(
+        !errs.iter().any(|e| e.code == "E0036"),
+        "future[int] must be fine, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -1075,7 +1311,11 @@ fn test_droppable_in_generic_struct_type_args_is_e0036() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0036"), "Vec[File] must be rejected, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0036"),
+        "Vec[File] must be rejected, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -1100,7 +1340,11 @@ fn test_droppable_in_call_type_args_is_e0036() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0036"), "identity[File]() must be rejected, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0036"),
+        "identity[File]() must be rejected, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -1114,7 +1358,9 @@ fn test_droppable_in_box_is_e0036() {
             stmts: vec![Stmt::SLetTyped {
                 loc: loc(),
                 name: "b".to_string(),
-                typ: Typ::TBox { of: Box::new(file_typ()) },
+                typ: Typ::TBox {
+                    of: Box::new(file_typ()),
+                },
                 expr: Box::new(Expr::EVoid { loc: loc() }),
             }],
             result: None,
@@ -1122,7 +1368,11 @@ fn test_droppable_in_box_is_e0036() {
         Safety::Safe,
     ));
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0036"), "box<File> must be rejected, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0036"),
+        "box<File> must be rejected, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -1141,7 +1391,9 @@ fn test_droppable_in_lambda_annotation_is_e0036() {
                     loc: loc(),
                     params: vec![Param::POwn {
                         name: "b".to_string(),
-                        typ: Typ::TBox { of: Box::new(file_typ()) },
+                        typ: Typ::TBox {
+                            of: Box::new(file_typ()),
+                        },
                     }],
                     ret: Typ::TNull,
                     captures: vec![],

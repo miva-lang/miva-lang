@@ -20,7 +20,12 @@ struct LockFile {
 pub fn read_lock() -> Option<HashMap<String, String>> {
     let content = std::fs::read_to_string(LOCK_FILE).ok()?;
     let lock: LockFile = toml::from_str(&content).ok()?;
-    Some(lock.dependency.into_iter().map(|d| (d.name, d.version)).collect())
+    Some(
+        lock.dependency
+            .into_iter()
+            .map(|d| (d.name, d.version))
+            .collect(),
+    )
 }
 
 pub fn write_lock(deps: &HashMap<String, String>) -> anyhow::Result<()> {
@@ -56,7 +61,9 @@ pub fn resolve(
                 anyhow::bail!(
                     "dependency '{}' locked at version {} but miva.toml requires {}.\n\
                      Run `miva dep` to update the lock file.",
-                    name, lv, version
+                    name,
+                    lv,
+                    version
                 );
             }
             resolved.insert(name.clone(), lv.clone());
@@ -66,7 +73,8 @@ pub fn resolve(
                 anyhow::bail!(
                     "dependency '{}' version {} is not installed.\n\
                      Expected at: {}",
-                    name, version,
+                    name,
+                    version,
                     versioned_dir.display()
                 );
             }
@@ -89,7 +97,8 @@ pub fn resolve_force(
             anyhow::bail!(
                 "dependency '{}' version {} is not installed.\n\
                  Expected at: {}",
-                name, version,
+                name,
+                version,
                 versioned_dir.display()
             );
         }

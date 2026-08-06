@@ -44,5 +44,4 @@ impl DependencyGraph {
         visited.remove(node);
         visited
     }
-
 }

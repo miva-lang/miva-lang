@@ -30,23 +30,41 @@ pub const TAG_UNIT: i32 = 5;
 
 impl MivaValue {
     pub fn int(v: i64) -> Self {
-        MivaValue { tag: TAG_INT, data: MivaValueData { i: v } }
+        MivaValue {
+            tag: TAG_INT,
+            data: MivaValueData { i: v },
+        }
     }
     pub fn f64(v: f64) -> Self {
-        MivaValue { tag: TAG_F64, data: MivaValueData { f: v } }
+        MivaValue {
+            tag: TAG_F64,
+            data: MivaValueData { f: v },
+        }
     }
     pub fn bool(v: bool) -> Self {
-        MivaValue { tag: TAG_BOOL, data: MivaValueData { b: v } }
+        MivaValue {
+            tag: TAG_BOOL,
+            data: MivaValueData { b: v },
+        }
     }
     pub fn null() -> Self {
-        MivaValue { tag: TAG_NULL, data: MivaValueData { i: 0 } }
+        MivaValue {
+            tag: TAG_NULL,
+            data: MivaValueData { i: 0 },
+        }
     }
     pub fn unit() -> Self {
-        MivaValue { tag: TAG_UNIT, data: MivaValueData { i: 0 } }
+        MivaValue {
+            tag: TAG_UNIT,
+            data: MivaValueData { i: 0 },
+        }
     }
     /// Take ownership of a NUL-terminated C string (must be freed by host).
     pub fn string_owned(s: *mut std::os::raw::c_char) -> Self {
-        MivaValue { tag: TAG_STRING, data: MivaValueData { s } }
+        MivaValue {
+            tag: TAG_STRING,
+            data: MivaValueData { s },
+        }
     }
 }
 

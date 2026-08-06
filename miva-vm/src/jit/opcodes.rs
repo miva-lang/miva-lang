@@ -1,31 +1,35 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::cursor::{Cursor, FuncCursor};
-use cranelift_codegen::ir::{Block, InstBuilder, MemFlags, types};
 use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::{types, Block, InstBuilder, MemFlags};
 use cranelift_codegen::Context;
 
 use crate::jit::{HelperFunctions, VmContext};
 use crate::MvmFunction;
 
 const SUPPORTED_OPCODES: &[u8] = &[
-    0x00, 0x01, 0x02, 0x04, 0x07, 0x08,
-    0x09, 0x0A,
-    0x0D, 0x0E,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
-    0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x25, 0x26, 0x27, 0x28, 0x29, 0x2A,
-    0x30, 0x31, 0x32,
-    0x35, 0x36,
+    0x00, 0x01, 0x02, 0x04, 0x07, 0x08, 0x09, 0x0A, 0x0D, 0x0E, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+    0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A,
+    0x30, 0x31, 0x32, 0x35, 0x36,
 ];
 
-fn load_field(cur: &mut FuncCursor, ctx: cranelift_codegen::ir::Value, offset: usize) -> cranelift_codegen::ir::Value {
+fn load_field(
+    cur: &mut FuncCursor,
+    ctx: cranelift_codegen::ir::Value,
+    offset: usize,
+) -> cranelift_codegen::ir::Value {
     let const_offset = cur.ins().iconst(types::I64, offset as i64);
     let addr = cur.ins().iadd(ctx, const_offset);
     cur.ins().load(types::I64, MemFlags::trusted(), addr, 0)
 }
 
-fn store_field(cur: &mut FuncCursor, ctx: cranelift_codegen::ir::Value, offset: usize, val: cranelift_codegen::ir::Value) {
+fn store_field(
+    cur: &mut FuncCursor,
+    ctx: cranelift_codegen::ir::Value,
+    offset: usize,
+    val: cranelift_codegen::ir::Value,
+) {
     let const_offset = cur.ins().iconst(types::I64, offset as i64);
     let addr = cur.ins().iadd(ctx, const_offset);
     cur.ins().store(MemFlags::trusted(), val, addr, 0);
@@ -78,19 +82,25 @@ pub fn compile_function(
     let halted = load_field(&mut cur, ctx_param, VmContext::OFFSET_HALTED);
     let one = cur.ins().iconst(types::I64, 1);
     let is_halted = cur.ins().icmp(IntCC::Equal, halted, one);
-    cur.ins().brif(is_halted, ret_block, &[], check_end_block, &[]);
+    cur.ins()
+        .brif(is_halted, ret_block, &[], check_end_block, &[]);
 
     cur.insert_block(check_end_block);
     let pc = load_field(&mut cur, ctx_param, VmContext::OFFSET_PC);
     let code_len = load_field(&mut cur, ctx_param, VmContext::OFFSET_CODE_LEN);
-    let at_end = cur.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, pc, code_len);
-    cur.ins().brif(at_end, ret_block, &[], dispatch_ok_block, &[]);
+    let at_end = cur
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, pc, code_len);
+    cur.ins()
+        .brif(at_end, ret_block, &[], dispatch_ok_block, &[]);
 
     cur.insert_block(dispatch_ok_block);
     let pc = load_field(&mut cur, ctx_param, VmContext::OFFSET_PC);
     let code_ptr = load_field(&mut cur, ctx_param, VmContext::OFFSET_CODE_PTR);
     let opcode_addr = cur.ins().iadd(code_ptr, pc);
-    let opcode_val = cur.ins().load(types::I64, MemFlags::trusted(), opcode_addr, 0);
+    let opcode_val = cur
+        .ins()
+        .load(types::I64, MemFlags::trusted(), opcode_addr, 0);
     let ff = cur.ins().iconst(types::I64, 0xFF);
     let loaded_opcode = cur.ins().band(opcode_val, ff);
 
@@ -207,7 +217,9 @@ pub fn compile_function(
         let four = cur.ins().iconst(types::I64, 4);
         let new_pc = cur.ins().iadd(pc, four);
         store_field(&mut cur, ctx_param, VmContext::OFFSET_PC, new_pc);
-        let call_inst = cur.ins().call(helpers.jit_load_local_int, &[ctx_param, idx]);
+        let call_inst = cur
+            .ins()
+            .call(helpers.jit_load_local_int, &[ctx_param, idx]);
         let val = cur.func.dfg.first_result(call_inst);
         cur.ins().call(helpers.jit_push_int, &[ctx_param, val]);
         cur.ins().jump(dispatch_block, &[]);
@@ -225,7 +237,8 @@ pub fn compile_function(
         store_field(&mut cur, ctx_param, VmContext::OFFSET_PC, new_pc);
         let call_inst = cur.ins().call(helpers.jit_pop_int, &[ctx_param]);
         let val = cur.func.dfg.first_result(call_inst);
-        cur.ins().call(helpers.jit_store_local_int, &[ctx_param, idx, val]);
+        cur.ins()
+            .call(helpers.jit_store_local_int, &[ctx_param, idx, val]);
         cur.ins().jump(dispatch_block, &[]);
     }
 

@@ -54,19 +54,25 @@ pub(crate) fn compile_libhost(
 
     let cc = which_cc()?;
     let (out_path, mode_args, artifact): (PathBuf, &[&str], &str) = match kind {
-        HostKind::SharedLib => (build_dir.join("libhost.so"), &["-shared", "-fPIC"], "libhost.so"),
+        HostKind::SharedLib => (
+            build_dir.join("libhost.so"),
+            &["-shared", "-fPIC"],
+            "libhost.so",
+        ),
         HostKind::Object => (build_dir.join("libhost.o"), &["-c"], "libhost.o"),
     };
-    let status = std::process::Command::new(&cc)
-        .args(mode_args)
+    let mut cmd = std::process::Command::new(&cc);
+    cmd.args(mode_args)
         .arg("-O2")
         .arg("-I")
         .arg(build_dir)
         .arg(&libhost_c)
         .arg("-o")
-        .arg(&out_path)
-        .status()
-        .map_err(|e| anyhow::anyhow!("failed to invoke C compiler for {}: {}", artifact, e))?;
+        .arg(&out_path);
+    let output =
+        super::env::run_with_timeout(&mut cmd, &format!("C compiler ({})", artifact), true)
+            .map_err(|e| anyhow::anyhow!("failed to invoke C compiler for {}: {}", artifact, e))?;
+    let status = output.status;
     if !status.success() {
         return Err(anyhow::anyhow!(
             "failed to compile {} from user unsafe functions",

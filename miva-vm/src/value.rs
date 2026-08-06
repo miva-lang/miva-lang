@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
 
-use serde_json::Value as JsonValue;
 use crate::xml::{XmlKind, XmlNode};
+use serde_json::Value as JsonValue;
 
 /// A handle to an asynchronously-running MVM task.
 ///
@@ -140,7 +140,14 @@ impl Value {
                 format!("[{}]", items.join(", "))
             }
             Value::Struct(fields) => {
-                format!("({})", fields.iter().map(|v| v.display()).collect::<Vec<_>>().join(", "))
+                format!(
+                    "({})",
+                    fields
+                        .iter()
+                        .map(|v| v.display())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
             Value::Boxed(b) => format!("box({})", b.lock().unwrap().display()),
             Value::Ptr(_, _) => "<ptr>".to_string(),
@@ -179,6 +186,8 @@ impl PartialEq for Value {
             (Value::Unit, Value::Unit) => true,
             (Value::PtrAny, Value::PtrAny) => true,
             (Value::Json(a), Value::Json(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Struct(a), Value::Struct(b)) => a == b,
             (Value::Xml(a), Value::Xml(b)) => Arc::ptr_eq(a, b),
             (Value::Enum(a, _), Value::Enum(b, _)) => a == b,
             // Cross-type comparisons (Miva allows int-bool etc.)

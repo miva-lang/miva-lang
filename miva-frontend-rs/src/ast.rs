@@ -74,9 +74,7 @@ pub enum Typ {
         returns: Box<Typ>,
     },
     #[serde(rename = "shape")]
-    TShape {
-        name: String,
-    },
+    TShape { name: String },
     #[serde(rename = "tuple")]
     TTuple {
         #[serde(rename = "elems")]
@@ -363,10 +361,7 @@ pub enum Expr {
         body: Box<Expr>,
     },
     #[serde(rename = "tupleLit")]
-    ETupleLit {
-        loc: Loc,
-        values: Vec<Expr>,
-    },
+    ETupleLit { loc: Loc, values: Vec<Expr> },
 }
 
 // ── Struct/When helpers ───────────────────────────────────────────────────

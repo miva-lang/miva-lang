@@ -22,7 +22,7 @@ unsafe main = () => {
   let s3 ptrany = std.mem.offset(buf, 12);
 
   // The whole buffer only needs to be freed once via the base pointer.
-  std.mem.free(buf);
+  std.mem.mem_free(buf);
 
   println("offset demo ok (slots at +0/+4/+8/+12)");
 }

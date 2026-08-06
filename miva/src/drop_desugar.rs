@@ -176,9 +176,12 @@ impl<'a> Ctx<'a> {
             Expr::ETupleLit { values, .. } => {
                 if let Some(first) = values.first() {
                     if let Some(elem) = self.infer_droppable(first, state) {
-                        return Some(Typ::TTuple { elems: values.iter().map(|v| {
-                            self.infer_droppable(v, state).unwrap_or(Typ::TInvalid)
-                        }).collect() });
+                        return Some(Typ::TTuple {
+                            elems: values
+                                .iter()
+                                .map(|v| self.infer_droppable(v, state).unwrap_or(Typ::TInvalid))
+                                .collect(),
+                        });
                     }
                 }
                 None
@@ -505,9 +508,8 @@ impl<'a> Ctx<'a> {
                     let mut expanded = false;
                     if let Expr::ECall { name, args, .. } = expr.as_ref() {
                         if name == "drop" {
-                            if let Some(
-                                Expr::EVar { name: v, .. } | Expr::EMove { name: v, .. },
-                            ) = args.first()
+                            if let Some(Expr::EVar { name: v, .. } | Expr::EMove { name: v, .. }) =
+                                args.first()
                             {
                                 let v = v.clone();
                                 if !state.is_shadowed(&v) {
@@ -1039,7 +1041,10 @@ mod tests {
                             loc: loc(),
                             name: "drop".to_string(),
                             type_args: vec![],
-                            args: vec![Expr::EVar { loc: loc(), name: "a".to_string() }],
+                            args: vec![Expr::EVar {
+                                loc: loc(),
+                                name: "a".to_string(),
+                            }],
                         }),
                     },
                 ],
@@ -1227,7 +1232,10 @@ mod tests {
                             loc: loc(),
                             name: "drop".to_string(),
                             type_args: vec![],
-                            args: vec![Expr::EVar { loc: loc(), name: "h".to_string() }],
+                            args: vec![Expr::EVar {
+                                loc: loc(),
+                                name: "h".to_string(),
+                            }],
                         }),
                     },
                 ],
@@ -1249,8 +1257,14 @@ mod tests {
             name: "Slot".to_string(),
             type_params: vec![],
             variants: vec![
-                EnumVariant { name: "Full".to_string(), payload: vec![file_typ()] },
-                EnumVariant { name: "Empty".to_string(), payload: vec![] },
+                EnumVariant {
+                    name: "Full".to_string(),
+                    payload: vec![file_typ()],
+                },
+                EnumVariant {
+                    name: "Empty".to_string(),
+                    payload: vec![],
+                },
             ],
         }
     }
@@ -1259,7 +1273,11 @@ mod tests {
         Stmt::SLetTyped {
             loc: loc(),
             name: name.to_string(),
-            typ: Typ::TStruct { name: "Slot".to_string(), fields: vec![], type_args: vec![] },
+            typ: Typ::TStruct {
+                name: "Slot".to_string(),
+                fields: vec![],
+                type_args: vec![],
+            },
             expr: Box::new(Expr::ECall {
                 loc: loc(),
                 name: "Slot.Full".to_string(),
@@ -1295,14 +1313,22 @@ mod tests {
         assert!(matches!(var.as_ref(), Expr::EVar { name, .. } if name == "s"));
         // Exactly one case: the Full variant, whose payload gets dropped.
         assert_eq!(cases.len(), 1, "got cases: {:?}", cases);
-        let Expr::EEnumPattern { enum_name, variant, bindings, .. } = cases[0].when.as_ref()
+        let Expr::EEnumPattern {
+            enum_name,
+            variant,
+            bindings,
+            ..
+        } = cases[0].when.as_ref()
         else {
             panic!("expected enum pattern, got: {:?}", cases[0].when);
         };
         assert_eq!(enum_name, "Slot");
         assert_eq!(variant, "Full");
         assert_eq!(bindings.len(), 1);
-        let Expr::EBlock { stmts: case_stmts, .. } = cases[0].then.as_ref() else {
+        let Expr::EBlock {
+            stmts: case_stmts, ..
+        } = cases[0].then.as_ref()
+        else {
             panic!("expected block case body, got: {:?}", cases[0].then);
         };
         assert_eq!(
@@ -1323,8 +1349,13 @@ mod tests {
                 vec![Stmt::SLetTyped {
                     loc: loc(),
                     name: "arr".to_string(),
-                    typ: Typ::TArray { of: Box::new(file_typ()) },
-                    expr: Box::new(Expr::EArrayLit { loc: loc(), values: vec![] }),
+                    typ: Typ::TArray {
+                        of: Box::new(file_typ()),
+                    },
+                    expr: Box::new(Expr::EArrayLit {
+                        loc: loc(),
+                        values: vec![],
+                    }),
                 }],
                 None,
             ),
@@ -1335,11 +1366,17 @@ mod tests {
         let Stmt::SExpr { expr, .. } = &stmts[1] else {
             panic!("expected SExpr(for), got: {:?}", stmts[1]);
         };
-        let Expr::EFor { var, range, body, .. } = expr.as_ref() else {
+        let Expr::EFor {
+            var, range, body, ..
+        } = expr.as_ref()
+        else {
             panic!("expected for loop over array var, got: {:?}", expr);
         };
         assert!(matches!(range.as_ref(), Expr::EVar { name, .. } if name == "arr"));
-        let Expr::EBlock { stmts: body_stmts, .. } = body.as_ref() else {
+        let Expr::EBlock {
+            stmts: body_stmts, ..
+        } = body.as_ref()
+        else {
             panic!("expected block for body, got: {:?}", body);
         };
         assert_eq!(

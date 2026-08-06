@@ -274,7 +274,7 @@ fn test_generic_identity_call() {
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
         make_func(
             "main",
@@ -319,7 +319,7 @@ fn test_generic_inference_no_type_args() {
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
         make_func(
             "main",
@@ -364,7 +364,7 @@ fn test_generic_type_arg_mismatch() {
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
         make_func(
             "main",
@@ -394,8 +394,14 @@ fn test_enum_typecheck_construct_and_match() {
             loc: Loc { line: 1, col: 1 },
             name: "Shape".into(),
             variants: vec![
-                EnumVariant { name: "Circle".into(), payload: vec![Typ::TInt] },
-                EnumVariant { name: "Rect".into(), payload: vec![Typ::TInt, Typ::TInt] },
+                EnumVariant {
+                    name: "Circle".into(),
+                    payload: vec![Typ::TInt],
+                },
+                EnumVariant {
+                    name: "Rect".into(),
+                    payload: vec![Typ::TInt, Typ::TInt],
+                },
             ],
             type_params: vec![],
         },
@@ -403,25 +409,44 @@ fn test_enum_typecheck_construct_and_match() {
             loc: Loc { line: 2, col: 1 },
             name: "area".into(),
             type_params: vec![],
-            params: vec![Param::POwn { name: "s".into(), typ: Typ::TStruct { name: "Shape".into(), fields: vec![], type_args: vec![] } }],
+            params: vec![Param::POwn {
+                name: "s".into(),
+                typ: Typ::TStruct {
+                    name: "Shape".into(),
+                    fields: vec![],
+                    type_args: vec![],
+                },
+            }],
             returns: Some(Typ::TInt),
             body: Box::new(Expr::EChoose {
                 loc: Loc { line: 3, col: 1 },
-                var: Box::new(Expr::EVar { loc: Loc { line: 3, col: 1 }, name: "s".into() }),
+                var: Box::new(Expr::EVar {
+                    loc: Loc { line: 3, col: 1 },
+                    name: "s".into(),
+                }),
                 cases: vec![WhenCase {
                     when: Box::new(Expr::EFieldAccess {
                         loc: Loc { line: 4, col: 1 },
-                        expr: Box::new(Expr::EVar { loc: Loc { line: 4, col: 1 }, name: "Shape".into() }),
+                        expr: Box::new(Expr::EVar {
+                            loc: Loc { line: 4, col: 1 },
+                            name: "Shape".into(),
+                        }),
                         field: "Circle".into(),
                     }),
                     guard: None,
-                    then: Box::new(Expr::EInt { loc: Loc { line: 4, col: 1 }, value: 1 }),
+                    then: Box::new(Expr::EInt {
+                        loc: Loc { line: 4, col: 1 },
+                        value: 1,
+                    }),
                 }],
-                otherwise: Some(Box::new(Expr::EInt { loc: Loc { line: 5, col: 1 }, value: 0 })),
+                otherwise: Some(Box::new(Expr::EInt {
+                    loc: Loc { line: 5, col: 1 },
+                    value: 0,
+                })),
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
     ];
     let errs = check_program(&defs);
@@ -436,8 +461,14 @@ fn test_enum_pattern_destructure_typecheck() {
             loc: Loc { line: 1, col: 1 },
             name: "Shape".into(),
             variants: vec![
-                EnumVariant { name: "Circle".into(), payload: vec![Typ::TInt] },
-                EnumVariant { name: "Rect".into(), payload: vec![Typ::TInt, Typ::TInt] },
+                EnumVariant {
+                    name: "Circle".into(),
+                    payload: vec![Typ::TInt],
+                },
+                EnumVariant {
+                    name: "Rect".into(),
+                    payload: vec![Typ::TInt, Typ::TInt],
+                },
             ],
             type_params: vec![],
         },
@@ -445,11 +476,21 @@ fn test_enum_pattern_destructure_typecheck() {
             loc: Loc { line: 2, col: 1 },
             name: "area".into(),
             type_params: vec![],
-            params: vec![Param::POwn { name: "s".into(), typ: Typ::TStruct { name: "Shape".into(), fields: vec![], type_args: vec![] } }],
+            params: vec![Param::POwn {
+                name: "s".into(),
+                typ: Typ::TStruct {
+                    name: "Shape".into(),
+                    fields: vec![],
+                    type_args: vec![],
+                },
+            }],
             returns: Some(Typ::TInt),
             body: Box::new(Expr::EChoose {
                 loc: Loc { line: 3, col: 1 },
-                var: Box::new(Expr::EVar { loc: Loc { line: 3, col: 1 }, name: "s".into() }),
+                var: Box::new(Expr::EVar {
+                    loc: Loc { line: 3, col: 1 },
+                    name: "s".into(),
+                }),
                 cases: vec![
                     WhenCase {
                         when: Box::new(Expr::EEnumPattern {
@@ -462,8 +503,14 @@ fn test_enum_pattern_destructure_typecheck() {
                         then: Box::new(Expr::EBinOp {
                             loc: Loc { line: 4, col: 1 },
                             op: BinOp::Mul,
-                            left: Box::new(Expr::EVar { loc: Loc { line: 4, col: 1 }, name: "r".into() }),
-                            right: Box::new(Expr::EVar { loc: Loc { line: 4, col: 1 }, name: "r".into() }),
+                            left: Box::new(Expr::EVar {
+                                loc: Loc { line: 4, col: 1 },
+                                name: "r".into(),
+                            }),
+                            right: Box::new(Expr::EVar {
+                                loc: Loc { line: 4, col: 1 },
+                                name: "r".into(),
+                            }),
                         }),
                     },
                     WhenCase {
@@ -477,16 +524,25 @@ fn test_enum_pattern_destructure_typecheck() {
                         then: Box::new(Expr::EBinOp {
                             loc: Loc { line: 5, col: 1 },
                             op: BinOp::Add,
-                            left: Box::new(Expr::EVar { loc: Loc { line: 5, col: 1 }, name: "w".into() }),
-                            right: Box::new(Expr::EVar { loc: Loc { line: 5, col: 1 }, name: "h".into() }),
+                            left: Box::new(Expr::EVar {
+                                loc: Loc { line: 5, col: 1 },
+                                name: "w".into(),
+                            }),
+                            right: Box::new(Expr::EVar {
+                                loc: Loc { line: 5, col: 1 },
+                                name: "h".into(),
+                            }),
                         }),
                     },
                 ],
-                otherwise: Some(Box::new(Expr::EInt { loc: Loc { line: 6, col: 1 }, value: 0 })),
+                otherwise: Some(Box::new(Expr::EInt {
+                    loc: Loc { line: 6, col: 1 },
+                    value: 0,
+                })),
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
     ];
     let errs = check_program(&defs);
@@ -500,20 +556,31 @@ fn test_enum_pattern_binding_arity_mismatch() {
         Def::DEnum {
             loc: Loc { line: 1, col: 1 },
             name: "Shape".into(),
-            variants: vec![
-                EnumVariant { name: "Circle".into(), payload: vec![Typ::TInt] },
-            ],
+            variants: vec![EnumVariant {
+                name: "Circle".into(),
+                payload: vec![Typ::TInt],
+            }],
             type_params: vec![],
         },
         Def::DFunc {
             loc: Loc { line: 2, col: 1 },
             name: "area".into(),
             type_params: vec![],
-            params: vec![Param::POwn { name: "s".into(), typ: Typ::TStruct { name: "Shape".into(), fields: vec![], type_args: vec![] } }],
+            params: vec![Param::POwn {
+                name: "s".into(),
+                typ: Typ::TStruct {
+                    name: "Shape".into(),
+                    fields: vec![],
+                    type_args: vec![],
+                },
+            }],
             returns: Some(Typ::TInt),
             body: Box::new(Expr::EChoose {
                 loc: Loc { line: 3, col: 1 },
-                var: Box::new(Expr::EVar { loc: Loc { line: 3, col: 1 }, name: "s".into() }),
+                var: Box::new(Expr::EVar {
+                    loc: Loc { line: 3, col: 1 },
+                    name: "s".into(),
+                }),
                 cases: vec![WhenCase {
                     when: Box::new(Expr::EEnumPattern {
                         loc: Loc { line: 4, col: 1 },
@@ -522,13 +589,19 @@ fn test_enum_pattern_binding_arity_mismatch() {
                         bindings: vec!["a".into(), "b".into()],
                     }),
                     guard: None,
-                    then: Box::new(Expr::EInt { loc: Loc { line: 4, col: 1 }, value: 1 }),
+                    then: Box::new(Expr::EInt {
+                        loc: Loc { line: 4, col: 1 },
+                        value: 1,
+                    }),
                 }],
-                otherwise: Some(Box::new(Expr::EInt { loc: Loc { line: 5, col: 1 }, value: 0 })),
+                otherwise: Some(Box::new(Expr::EInt {
+                    loc: Loc { line: 5, col: 1 },
+                    value: 0,
+                })),
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
     ];
     let errs = check_program(&defs);
@@ -544,8 +617,14 @@ fn test_generic_enum_typecheck_construct_and_match() {
             loc: Loc { line: 1, col: 1 },
             name: "Box".into(),
             variants: vec![
-                EnumVariant { name: "Value".into(), payload: vec![Typ::TGenericParam { name: "T".into() }] },
-                EnumVariant { name: "Empty".into(), payload: vec![] },
+                EnumVariant {
+                    name: "Value".into(),
+                    payload: vec![Typ::TGenericParam { name: "T".into() }],
+                },
+                EnumVariant {
+                    name: "Empty".into(),
+                    payload: vec![],
+                },
             ],
             type_params: vec!["T".into()],
         },
@@ -561,14 +640,24 @@ fn test_generic_enum_typecheck_construct_and_match() {
                     Stmt::SLetTyped {
                         loc: Loc { line: 4, col: 1 },
                         name: "b".into(),
-                        typ: Typ::TStruct { name: "Box".into(), fields: vec![], type_args: vec![Typ::TInt] },
+                        typ: Typ::TStruct {
+                            name: "Box".into(),
+                            fields: vec![],
+                            type_args: vec![Typ::TInt],
+                        },
                         expr: Box::new(Expr::ECall {
                             loc: Loc { line: 4, col: 1 },
                             name: "Value".into(),
                             type_args: vec![Typ::TInt],
                             args: vec![
-                                Expr::EVar { loc: Loc { line: 4, col: 1 }, name: "Box".into() },
-                                Expr::EInt { loc: Loc { line: 4, col: 1 }, value: 1 },
+                                Expr::EVar {
+                                    loc: Loc { line: 4, col: 1 },
+                                    name: "Box".into(),
+                                },
+                                Expr::EInt {
+                                    loc: Loc { line: 4, col: 1 },
+                                    value: 1,
+                                },
                             ],
                         }),
                     },
@@ -576,32 +665,45 @@ fn test_generic_enum_typecheck_construct_and_match() {
                         loc: Loc { line: 5, col: 1 },
                         expr: Box::new(Expr::EChoose {
                             loc: Loc { line: 5, col: 1 },
-                            var: Box::new(Expr::EVar { loc: Loc { line: 5, col: 1 }, name: "b".into() }),
-                            cases: vec![
-                                WhenCase {
-                                    when: Box::new(Expr::EEnumPattern {
-                                        loc: Loc { line: 6, col: 1 },
-                                        enum_name: "Box".into(),
-                                        variant: "Value".into(),
-                                        bindings: vec!["v".into()],
-                                    }),
-                                    guard: None,
-                                    then: Box::new(Expr::EVar { loc: Loc { line: 6, col: 1 }, name: "v".into() }),
-                                },
-                            ],
-                            otherwise: Some(Box::new(Expr::EInt { loc: Loc { line: 7, col: 1 }, value: 0 })),
+                            var: Box::new(Expr::EVar {
+                                loc: Loc { line: 5, col: 1 },
+                                name: "b".into(),
+                            }),
+                            cases: vec![WhenCase {
+                                when: Box::new(Expr::EEnumPattern {
+                                    loc: Loc { line: 6, col: 1 },
+                                    enum_name: "Box".into(),
+                                    variant: "Value".into(),
+                                    bindings: vec!["v".into()],
+                                }),
+                                guard: None,
+                                then: Box::new(Expr::EVar {
+                                    loc: Loc { line: 6, col: 1 },
+                                    name: "v".into(),
+                                }),
+                            }],
+                            otherwise: Some(Box::new(Expr::EInt {
+                                loc: Loc { line: 7, col: 1 },
+                                value: 0,
+                            })),
                         }),
                     },
                     Stmt::SReturn {
                         loc: Loc { line: 8, col: 1 },
-                        expr: Box::new(Expr::EInt { loc: Loc { line: 8, col: 1 }, value: 1 }),
+                        expr: Box::new(Expr::EInt {
+                            loc: Loc { line: 8, col: 1 },
+                            value: 1,
+                        }),
                     },
                 ],
-                result: Some(Box::new(Expr::EInt { loc: Loc { line: 9, col: 1 }, value: 0 })),
+                result: Some(Box::new(Expr::EInt {
+                    loc: Loc { line: 9, col: 1 },
+                    value: 0,
+                })),
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
     ];
     let errs = check_program(&defs);
@@ -615,9 +717,10 @@ fn test_generic_enum_type_mismatch() {
         Def::DEnum {
             loc: Loc { line: 1, col: 1 },
             name: "Box".into(),
-            variants: vec![
-                EnumVariant { name: "Value".into(), payload: vec![Typ::TGenericParam { name: "T".into() }] },
-            ],
+            variants: vec![EnumVariant {
+                name: "Value".into(),
+                payload: vec![Typ::TGenericParam { name: "T".into() }],
+            }],
             type_params: vec!["T".into()],
         },
         Def::DFunc {
@@ -626,13 +729,20 @@ fn test_generic_enum_type_mismatch() {
             type_params: vec![],
             params: vec![Param::POwn {
                 name: "b".into(),
-                typ: Typ::TStruct { name: "Box".into(), fields: vec![], type_args: vec![Typ::TInt] },
+                typ: Typ::TStruct {
+                    name: "Box".into(),
+                    fields: vec![],
+                    type_args: vec![Typ::TInt],
+                },
             }],
             returns: Some(Typ::TInt),
-            body: Box::new(Expr::EInt { loc: Loc { line: 3, col: 1 }, value: 0 }),
+            body: Box::new(Expr::EInt {
+                loc: Loc { line: 3, col: 1 },
+                value: 0,
+            }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
         Def::DFunc {
             loc: Loc { line: 4, col: 1 },
@@ -646,14 +756,24 @@ fn test_generic_enum_type_mismatch() {
                     Stmt::SLetTyped {
                         loc: Loc { line: 6, col: 1 },
                         name: "b".into(),
-                        typ: Typ::TStruct { name: "Box".into(), fields: vec![], type_args: vec![Typ::TString] },
+                        typ: Typ::TStruct {
+                            name: "Box".into(),
+                            fields: vec![],
+                            type_args: vec![Typ::TString],
+                        },
                         expr: Box::new(Expr::ECall {
                             loc: Loc { line: 6, col: 1 },
                             name: "Value".into(),
                             type_args: vec![Typ::TString],
                             args: vec![
-                                Expr::EVar { loc: Loc { line: 6, col: 1 }, name: "Box".into() },
-                                Expr::EString { loc: Loc { line: 6, col: 1 }, value: "x".into() },
+                                Expr::EVar {
+                                    loc: Loc { line: 6, col: 1 },
+                                    name: "Box".into(),
+                                },
+                                Expr::EString {
+                                    loc: Loc { line: 6, col: 1 },
+                                    value: "x".into(),
+                                },
                             ],
                         }),
                     },
@@ -663,15 +783,21 @@ fn test_generic_enum_type_mismatch() {
                             loc: Loc { line: 7, col: 1 },
                             name: "f".into(),
                             type_args: vec![],
-                            args: vec![Expr::EVar { loc: Loc { line: 7, col: 1 }, name: "b".into() }],
+                            args: vec![Expr::EVar {
+                                loc: Loc { line: 7, col: 1 },
+                                name: "b".into(),
+                            }],
                         }),
                     },
                 ],
-                result: Some(Box::new(Expr::EInt { loc: Loc { line: 8, col: 1 }, value: 0 })),
+                result: Some(Box::new(Expr::EInt {
+                    loc: Loc { line: 8, col: 1 },
+                    value: 0,
+                })),
             }),
             safety: Safety::Safe,
             is_async: false,
-        type_bounds: vec![],
+            type_bounds: vec![],
         },
     ];
     let errs = check_program(&defs);
@@ -687,19 +813,28 @@ fn test_func_return_type_mismatch() {
             "main",
             vec![],
             Some(Typ::TInt),
-            Expr::EInt { loc: loc(), value: 42 },
+            Expr::EInt {
+                loc: loc(),
+                value: 42,
+            },
             Safety::Safe,
         ),
         make_func(
             "bad_return",
             vec![],
             Some(Typ::TInt),
-            Expr::EFloat { loc: loc(), value: 3.14 },
+            Expr::EFloat {
+                loc: loc(),
+                value: 3.14,
+            },
             Safety::Safe,
         ),
     ];
     let errs = check_program(&defs);
-    assert!(!errs.is_empty(), "returning float from int function should error");
+    assert!(
+        !errs.is_empty(),
+        "returning float from int function should error"
+    );
     assert!(errs.iter().any(|e| e.code == "E0017"));
 }
 
@@ -726,8 +861,14 @@ fn test_struct_literal_field_type_mismatch() {
         make_struct(
             "Point",
             vec![
-                FieldDef { name: "x".to_string(), typ: Typ::TInt },
-                FieldDef { name: "y".to_string(), typ: Typ::TInt },
+                FieldDef {
+                    name: "x".to_string(),
+                    typ: Typ::TInt,
+                },
+                FieldDef {
+                    name: "y".to_string(),
+                    typ: Typ::TInt,
+                },
             ],
         ),
         make_func(
@@ -740,11 +881,17 @@ fn test_struct_literal_field_type_mismatch() {
                 fields: vec![
                     ValueField {
                         name: "x".to_string(),
-                        value: Expr::EInt { loc: loc(), value: 1 },
+                        value: Expr::EInt {
+                            loc: loc(),
+                            value: 1,
+                        },
                     },
                     ValueField {
                         name: "y".to_string(),
-                        value: Expr::EBool { loc: loc(), value: true },
+                        value: Expr::EBool {
+                            loc: loc(),
+                            value: true,
+                        },
                     },
                 ],
                 type_args: vec![],
@@ -763,9 +910,15 @@ fn test_func_arg_type_mismatch() {
         make_module("test"),
         make_func(
             "add",
-            vec![Param::POwn { name: "a".to_string(), typ: Typ::TInt }],
+            vec![Param::POwn {
+                name: "a".to_string(),
+                typ: Typ::TInt,
+            }],
             Some(Typ::TInt),
-            Expr::EVar { loc: loc(), name: "a".to_string() },
+            Expr::EVar {
+                loc: loc(),
+                name: "a".to_string(),
+            },
             Safety::Safe,
         ),
         make_func(
@@ -776,7 +929,10 @@ fn test_func_arg_type_mismatch() {
                 loc: loc(),
                 name: "add".to_string(),
                 type_args: vec![],
-                args: vec![Expr::EBool { loc: loc(), value: true }],
+                args: vec![Expr::EBool {
+                    loc: loc(),
+                    value: true,
+                }],
             },
             Safety::Safe,
         ),
@@ -792,9 +948,15 @@ fn test_valid_func_call_with_correct_types() {
         make_module("test"),
         make_func(
             "add",
-            vec![Param::POwn { name: "a".to_string(), typ: Typ::TInt }],
+            vec![Param::POwn {
+                name: "a".to_string(),
+                typ: Typ::TInt,
+            }],
             Some(Typ::TInt),
-            Expr::EVar { loc: loc(), name: "a".to_string() },
+            Expr::EVar {
+                loc: loc(),
+                name: "a".to_string(),
+            },
             Safety::Safe,
         ),
         make_func(
@@ -805,13 +967,20 @@ fn test_valid_func_call_with_correct_types() {
                 loc: loc(),
                 name: "add".to_string(),
                 type_args: vec![],
-                args: vec![Expr::EInt { loc: loc(), value: 5 }],
+                args: vec![Expr::EInt {
+                    loc: loc(),
+                    value: 5,
+                }],
             },
             Safety::Safe,
         ),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "valid call should have no errors, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "valid call should have no errors, got: {:?}",
+        errs
+    );
 }
 
 fn file_struct_typ() -> Typ {
@@ -835,115 +1004,211 @@ fn make_drop_impl(struct_name: &str, func: &str) -> Def {
 }
 
 fn make_file_close(name: &str, params: Vec<Param>, returns: Option<Typ>) -> Def {
-    make_func(name, params, returns, Expr::EVoid { loc: loc() }, Safety::Safe)
+    make_func(
+        name,
+        params,
+        returns,
+        Expr::EVoid { loc: loc() },
+        Safety::Safe,
+    )
 }
 
 #[test]
 fn test_op_drop_valid_registration() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_file_close(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             None,
         ),
         make_drop_impl("File", "file_close"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "valid op_drop should have no errors, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "valid op_drop should have no errors, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_op_drop_rejects_own_param() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_file_close(
             "file_close",
-            vec![Param::POwn { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::POwn {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             None,
         ),
         make_drop_impl("File", "file_close"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0031"), "own param should be E0031, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0031"),
+        "own param should be E0031, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_op_drop_rejects_wrong_param_type() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_file_close(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: Typ::TInt }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: Typ::TInt,
+            }],
             None,
         ),
         make_drop_impl("File", "file_close"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0031"), "wrong param type should be E0031, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0031"),
+        "wrong param type should be E0031, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_op_drop_rejects_return_value() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_func(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             Some(Typ::TInt),
-            Expr::EInt { loc: loc(), value: 0 },
+            Expr::EInt {
+                loc: loc(),
+                value: 0,
+            },
             Safety::Safe,
         ),
         make_drop_impl("File", "file_close"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0031"), "return value should be E0031, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0031"),
+        "return value should be E0031, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_op_drop_rejects_unknown_function() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_drop_impl("File", "no_such_fn"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0031"), "unknown function should be E0031, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0031"),
+        "unknown function should be E0031, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_op_drop_rejects_duplicate_registration() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_file_close(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             None,
         ),
         make_file_close(
             "file_close2",
-            vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             None,
         ),
         make_drop_impl("File", "file_close"),
         make_drop_impl("File", "file_close2"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0032"), "duplicate op_drop should be E0032, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0032"),
+        "duplicate op_drop should be E0032, got: {:?}",
+        errs
+    );
 }
 
 fn sealed_defs(main_body: Expr) -> Vec<Def> {
     vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_file_close(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             None,
         ),
         make_drop_impl("File", "file_close"),
@@ -966,7 +1231,10 @@ fn test_sealed_drop_fn_direct_call_is_e0034() {
                     type_args: vec![],
                     fields: vec![ValueField {
                         name: "fd".to_string(),
-                        value: Expr::EInt { loc: loc(), value: 1 },
+                        value: Expr::EInt {
+                            loc: loc(),
+                            value: 1,
+                        },
                     }],
                 }),
             },
@@ -976,14 +1244,21 @@ fn test_sealed_drop_fn_direct_call_is_e0034() {
                     loc: loc(),
                     name: "file_close".to_string(),
                     type_args: vec![],
-                    args: vec![Expr::EVar { loc: loc(), name: "f".to_string() }],
+                    args: vec![Expr::EVar {
+                        loc: loc(),
+                        name: "f".to_string(),
+                    }],
                 }),
             },
         ],
         result: None,
     });
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0034"), "direct call of sealed drop fn should be E0034, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0034"),
+        "direct call of sealed drop fn should be E0034, got: {:?}",
+        errs
+    );
 }
 
 #[test]
@@ -994,26 +1269,46 @@ fn test_sealed_drop_fn_value_use_is_e0034() {
             loc: loc(),
             mutable: false,
             name: "g".to_string(),
-            expr: Box::new(Expr::EVar { loc: loc(), name: "file_close".to_string() }),
+            expr: Box::new(Expr::EVar {
+                loc: loc(),
+                name: "file_close".to_string(),
+            }),
         }],
         result: None,
     });
     let errs = check_program(&defs);
-    assert!(errs.iter().any(|e| e.code == "E0034"), "value use of sealed drop fn should be E0034, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|e| e.code == "E0034"),
+        "value use of sealed drop fn should be E0034, got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_drop_fn_body_may_reference_self() {
     let defs = vec![
         make_module("test"),
-        make_struct("File", vec![FieldDef { name: "fd".to_string(), typ: Typ::TInt }]),
+        make_struct(
+            "File",
+            vec![FieldDef {
+                name: "fd".to_string(),
+                typ: Typ::TInt,
+            }],
+        ),
         make_file_close(
             "file_close",
-            vec![Param::PRef { name: "self".to_string(), typ: file_struct_typ() }],
+            vec![Param::PRef {
+                name: "self".to_string(),
+                typ: file_struct_typ(),
+            }],
             None,
         ),
         make_drop_impl("File", "file_close"),
     ];
     let errs = check_program(&defs);
-    assert!(errs.is_empty(), "drop fn definition itself should not trigger E0034, got: {:?}", errs);
+    assert!(
+        errs.is_empty(),
+        "drop fn definition itself should not trigger E0034, got: {:?}",
+        errs
+    );
 }

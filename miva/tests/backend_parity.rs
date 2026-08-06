@@ -27,7 +27,11 @@ fn mvm_bin() -> PathBuf {
             .expect("failed to spawn cargo build for miva-vm");
         assert!(status.success(), "cargo build -p miva-vm failed");
     }
-    assert!(candidate.exists(), "mvm binary not found at {}", candidate.display());
+    assert!(
+        candidate.exists(),
+        "mvm binary not found at {}",
+        candidate.display()
+    );
     candidate
 }
 
@@ -81,11 +85,7 @@ fn assert_backend_parity(example: &str) {
     let src = root.join("examples").join(example);
     assert!(src.exists(), "example not found: {}", src.display());
 
-    let tmp = std::env::temp_dir().join(format!(
-        "miva-parity-{}-{}",
-        example,
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("miva-parity-{}-{}", example, std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
     fs::copy(src.join("miva.toml"), tmp.join("miva.toml")).unwrap();

@@ -62,9 +62,9 @@ impl MvmProgram {
     /// Load from binary format.
     pub fn from_bytes(data: &[u8]) -> Result<Self, VmError> {
         fn read_u32_at(data: &[u8], pos: usize, what: &str) -> Result<u32, VmError> {
-            let bytes = data
-                .get(pos..pos + 4)
-                .ok_or_else(|| VmError::invalid_bytecode(format!("Unexpected end of data ({})", what)))?;
+            let bytes = data.get(pos..pos + 4).ok_or_else(|| {
+                VmError::invalid_bytecode(format!("Unexpected end of data ({})", what))
+            })?;
             Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
         }
 
@@ -89,11 +89,12 @@ impl MvmProgram {
         for _ in 0..string_count {
             let len = read_u32_at(data, pos, "string length")? as usize;
             pos += 4;
-            let bytes = data
-                .get(pos..pos + len)
-                .ok_or_else(|| VmError::invalid_bytecode("Unexpected end of data (string content)"))?;
-            let s = String::from_utf8(bytes.to_vec())
-                .map_err(|e| VmError::invalid_bytecode(format!("Invalid UTF-8 in string pool: {}", e)))?;
+            let bytes = data.get(pos..pos + len).ok_or_else(|| {
+                VmError::invalid_bytecode("Unexpected end of data (string content)")
+            })?;
+            let s = String::from_utf8(bytes.to_vec()).map_err(|e| {
+                VmError::invalid_bytecode(format!("Invalid UTF-8 in string pool: {}", e))
+            })?;
             strings.push(s);
             pos += len;
         }
@@ -109,10 +110,9 @@ impl MvmProgram {
             pos += 4;
             let locals = read_u32_at(data, pos, "func locals")?;
             pos += 4;
-            let is_async = *data
-                .get(pos)
-                .ok_or_else(|| VmError::invalid_bytecode("Unexpected end of data (function is_async)"))?
-                != 0;
+            let is_async = *data.get(pos).ok_or_else(|| {
+                VmError::invalid_bytecode("Unexpected end of data (function is_async)")
+            })? != 0;
             pos += 1;
             let code_size = read_u32_at(data, pos, "function code size")? as usize;
             pos += 4;
@@ -127,7 +127,13 @@ impl MvmProgram {
                     strings.len()
                 )));
             }
-            functions.push(MvmFunction { name_idx, arity, locals, is_async, code });
+            functions.push(MvmFunction {
+                name_idx,
+                arity,
+                locals,
+                is_async,
+                code,
+            });
             pos += code_size;
         }
 
@@ -177,7 +183,13 @@ pub struct Mvm {
     memory: Vec<Value>,
     /// Mutex table: handle -> (raw mutex pointer, raw guard pointer or null).
     /// Both are leaked heap pointers. guard == null means unlocked.
-    mutex_table: HashMap<i64, (*const std::sync::Mutex<()>, *const std::sync::MutexGuard<'static, ()>)>,
+    mutex_table: HashMap<
+        i64,
+        (
+            *const std::sync::Mutex<()>,
+            *const std::sync::MutexGuard<'static, ()>,
+        ),
+    >,
     /// Next mutex handle ID.
     mutex_next_id: i64,
     /// Host functions loaded from the project's libhost.so (user `unsafe fn`s).
@@ -216,7 +228,12 @@ impl Mvm {
             .name("mvm-main".to_string())
             .stack_size(VM_STACK_SIZE)
             .spawn(move || self.run())
-            .map_err(|e| VmError::new(crate::error::TrapKind::Runtime, format!("failed to spawn VM thread: {}", e)))?
+            .map_err(|e| {
+                VmError::new(
+                    crate::error::TrapKind::Runtime,
+                    format!("failed to spawn VM thread: {}", e),
+                )
+            })?
             .join()
             .map_err(|_| VmError::new(crate::error::TrapKind::Runtime, "VM thread panicked"))?
     }
@@ -289,12 +306,20 @@ impl Mvm {
             return Ok(f);
         }
         let sym_name = format!("miva_host_{}", name);
-        let lib = self.host_lib.as_ref()
-            .ok_or_else(|| format!("unsafe host function '{}' requires libhost.so but it was not loaded", name))?;
+        let lib = self.host_lib.as_ref().ok_or_else(|| {
+            format!(
+                "unsafe host function '{}' requires libhost.so but it was not loaded",
+                name
+            )
+        })?;
         unsafe {
-            let f: libloading::Symbol<crate::host::HostFn> = lib
-                .get(sym_name.as_bytes())
-                .map_err(|e| format!("unsafe host function '{}' not found in libhost.so: {}", name, e))?;
+            let f: libloading::Symbol<crate::host::HostFn> =
+                lib.get(sym_name.as_bytes()).map_err(|e| {
+                    format!(
+                        "unsafe host function '{}' not found in libhost.so: {}",
+                        name, e
+                    )
+                })?;
             // Leak the symbol into a static lifetime handle stored in the table.
             let f: crate::host::HostFn = *f;
             self.host_table.insert(name.to_string(), f);
@@ -343,8 +368,13 @@ impl Mvm {
 
     /// Find the entry point function (main or the first function).
     fn find_entry(&self) -> Option<usize> {
-        self.func_name_cache.get("main").copied()
-            .or_else(|| if !self.program.functions.is_empty() { Some(0) } else { None })
+        self.func_name_cache.get("main").copied().or_else(|| {
+            if !self.program.functions.is_empty() {
+                Some(0)
+            } else {
+                None
+            }
+        })
     }
 
     /// Push a value onto the operand stack.
@@ -371,7 +401,8 @@ impl Mvm {
 
     /// Run the VM to completion.
     pub fn run(&mut self) -> Result<i64, VmError> {
-        let entry = self.find_entry()
+        let entry = self
+            .find_entry()
             .ok_or_else(|| VmError::invalid_bytecode("No entry point (main function) found"))?;
         self.call_internal(entry, vec![])?;
         Ok(self.exit_code)
@@ -401,8 +432,11 @@ impl Mvm {
         if args.len() != arity as usize {
             return Err(format!(
                 "Function '{}' expects {} args, got {}",
-                name, arity, args.len()
-            ).into());
+                name,
+                arity,
+                args.len()
+            )
+            .into());
         }
 
         // Push args onto stack
@@ -480,7 +514,9 @@ impl Mvm {
             let exit = jit_fn(&mut ctx as *mut VmContext);
 
             // Sync back VM state from VmContext
-            unsafe { self.stack.set_len(ctx.stack_len); }
+            unsafe {
+                self.stack.set_len(ctx.stack_len);
+            }
             self.pc = ctx.pc;
             self.exit_code = ctx.exit_code;
             self.halted = ctx.halted;
@@ -514,17 +550,17 @@ impl Mvm {
     fn maybe_compile_hot_function(&mut self, func_idx: usize) {
         let exec_counts_len = self.exec_counts.len();
         if func_idx >= exec_counts_len {
-            self.exec_counts.resize_with(func_idx + 1, || AtomicU64::new(0));
+            self.exec_counts
+                .resize_with(func_idx + 1, || AtomicU64::new(0));
         }
         self.exec_counts[func_idx].fetch_add(1, Ordering::Relaxed);
         let count = self.exec_counts[func_idx].load(Ordering::Relaxed);
         if count >= HOTNESS_THRESHOLD {
             if let Some(ref mut compiler) = self.jit_compiler {
                 if self.jit_table.get(func_idx).is_none() {
-                    if let Ok(jit_ptr) = compiler.compile_function(
-                        &self.program.functions[func_idx],
-                        func_idx,
-                    ) {
+                    if let Ok(jit_ptr) =
+                        compiler.compile_function(&self.program.functions[func_idx], func_idx)
+                    {
                         self.jit_table.insert(func_idx, jit_ptr);
                     }
                 }
@@ -605,7 +641,9 @@ impl Mvm {
                     let val = self.peek()?.clone();
                     self.push(val)?;
                 }
-                Opcode::Drop => { self.pop()?; }
+                Opcode::Drop => {
+                    self.pop()?;
+                }
                 Opcode::Swap => {
                     let a = self.pop()?;
                     let b = self.pop()?;
@@ -615,7 +653,11 @@ impl Mvm {
                 Opcode::Pack => {
                     let count = match self.pop()? {
                         Value::Int(n) => n as usize,
-                        v => return Err(format!("Pack expected int count, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("Pack expected int count, got {}", v.type_name()).into()
+                            )
+                        }
                     };
                     let mut vals = Vec::with_capacity(count);
                     for _ in 0..count {
@@ -657,7 +699,9 @@ impl Mvm {
                     let b = self.pop()?;
                     let a = self.pop()?;
                     match (&a, &b) {
-                        (Value::Int(ai), Value::Int(bi)) => self.push(Value::Int(ai.wrapping_add(*bi)))?,
+                        (Value::Int(ai), Value::Int(bi)) => {
+                            self.push(Value::Int(ai.wrapping_add(*bi)))?
+                        }
                         (Value::String(as_), Value::String(bs_)) => {
                             self.push(Value::String(Arc::new(format!("{}{}", as_, bs_))))?;
                         }
@@ -668,24 +712,69 @@ impl Mvm {
                             self.push(Value::String(Arc::new(format!("{}{}", ai, bs_))))?;
                         }
                         _ => {
-                            return Err(format!("Cannot add {} and {}", a.type_name(), b.type_name()).into());
+                            return Err(format!(
+                                "Cannot add {} and {}",
+                                a.type_name(),
+                                b.type_name()
+                            )
+                            .into());
                         }
                     }
                 }
-                Opcode::I64Sub => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Int(a.wrapping_sub(b)))?; }
-                Opcode::I64Mul => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Int(a.wrapping_mul(b)))?; }
-                Opcode::I64Div => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; if b == 0 { return Err(VmError::division_by_zero()); } self.push(Value::Int(a.wrapping_div(b)))?; }
-                Opcode::I64Rem => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; if b == 0 { return Err(VmError::division_by_zero()); } self.push(Value::Int(a.wrapping_rem(b)))?; }
-                Opcode::I64Neg => { let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Int(a.wrapping_neg()))?; }
-                Opcode::I64Shl => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Int(a.wrapping_shl(b as u32)))?; }
-                Opcode::I64Shr => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Int(a.wrapping_shr(b as u32)))?; }
+                Opcode::I64Sub => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Int(a.wrapping_sub(b)))?;
+                }
+                Opcode::I64Mul => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Int(a.wrapping_mul(b)))?;
+                }
+                Opcode::I64Div => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    if b == 0 {
+                        return Err(VmError::division_by_zero());
+                    }
+                    self.push(Value::Int(a.wrapping_div(b)))?;
+                }
+                Opcode::I64Rem => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    if b == 0 {
+                        return Err(VmError::division_by_zero());
+                    }
+                    self.push(Value::Int(a.wrapping_rem(b)))?;
+                }
+                Opcode::I64Neg => {
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Int(a.wrapping_neg()))?;
+                }
+                Opcode::I64Shl => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Int(a.wrapping_shl(b as u32)))?;
+                }
+                Opcode::I64Shr => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Int(a.wrapping_shr(b as u32)))?;
+                }
                 Opcode::I64And => {
                     let b = self.pop()?;
                     let a = self.pop()?;
                     match (a, b) {
                         (Value::Bool(x), Value::Bool(y)) => self.push(Value::Bool(x && y))?,
                         (Value::Int(x), Value::Int(y)) => self.push(Value::Int(x & y))?,
-                        (x, y) => return Err(format!("I64And: expected bool or int operands, got {} and {}", x.type_name(), y.type_name()).into()),
+                        (x, y) => {
+                            return Err(format!(
+                                "I64And: expected bool or int operands, got {} and {}",
+                                x.type_name(),
+                                y.type_name()
+                            )
+                            .into())
+                        }
                     }
                 }
                 Opcode::I64Or => {
@@ -694,67 +783,130 @@ impl Mvm {
                     match (a, b) {
                         (Value::Bool(x), Value::Bool(y)) => self.push(Value::Bool(x || y))?,
                         (Value::Int(x), Value::Int(y)) => self.push(Value::Int(x | y))?,
-                        (x, y) => return Err(format!("I64Or: expected bool or int operands, got {} and {}", x.type_name(), y.type_name()).into()),
+                        (x, y) => {
+                            return Err(format!(
+                                "I64Or: expected bool or int operands, got {} and {}",
+                                x.type_name(),
+                                y.type_name()
+                            )
+                            .into())
+                        }
                     }
                 }
-                Opcode::I64Xor => { let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Int(a ^ b))?; }
+                Opcode::I64Xor => {
+                    let b = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Int(a ^ b))?;
+                }
 
                 // Float64 arithmetic
-                Opcode::F64Add => { let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Float64(a + b))?; }
-                Opcode::F64Sub => { let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Float64(a - b))?; }
-                Opcode::F64Mul => { let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Float64(a * b))?; }
-                Opcode::F64Div => { let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Float64(a / b))?; }
-                Opcode::F64Neg => { let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Float64(-a))?; }
+                Opcode::F64Add => {
+                    let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Float64(a + b))?;
+                }
+                Opcode::F64Sub => {
+                    let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Float64(a - b))?;
+                }
+                Opcode::F64Mul => {
+                    let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Float64(a * b))?;
+                }
+                Opcode::F64Div => {
+                    let b = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Float64(a / b))?;
+                }
+                Opcode::F64Neg => {
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Float64(-a))?;
+                }
 
                 // Float32 arithmetic
                 Opcode::F32Add => {
-                    let b = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
-                    let a = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
+                    let b = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
+                    let a = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
                     self.push(Value::Float32(a + b))?;
                 }
                 Opcode::F32Sub => {
-                    let b = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
-                    let a = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
+                    let b = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
+                    let a = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
                     self.push(Value::Float32(a - b))?;
                 }
                 Opcode::F32Mul => {
-                    let b = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
-                    let a = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
+                    let b = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
+                    let a = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
                     self.push(Value::Float32(a * b))?;
                 }
                 Opcode::F32Div => {
-                    let b = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
-                    let a = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
+                    let b = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
+                    let a = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
                     self.push(Value::Float32(a / b))?;
                 }
                 Opcode::F32Neg => {
-                    let a = match self.pop()? { Value::Float32(f) => f, v => return Err(format!("Expected float32, got {}", v.type_name()).into()) };
+                    let a = match self.pop()? {
+                        Value::Float32(f) => f,
+                        v => return Err(format!("Expected float32, got {}", v.type_name()).into()),
+                    };
                     self.push(Value::Float32(-a))?;
                 }
 
                 // Comparisons
                 Opcode::CmpEq => {
-                    let b = self.pop()?; let a = self.pop()?;
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.push(Value::Bool(a == b))?;
                 }
                 Opcode::CmpNeq => {
-                    let b = self.pop()?; let a = self.pop()?;
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.push(Value::Bool(a != b))?;
                 }
                 Opcode::CmpLt => {
-                    let b = self.pop()?; let a = self.pop()?;
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.push(Value::Bool(a < b))?;
                 }
                 Opcode::CmpGt => {
-                    let b = self.pop()?; let a = self.pop()?;
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.push(Value::Bool(a > b))?;
                 }
                 Opcode::CmpLe => {
-                    let b = self.pop()?; let a = self.pop()?;
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.push(Value::Bool(a <= b))?;
                 }
                 Opcode::CmpGe => {
-                    let b = self.pop()?; let a = self.pop()?;
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.push(Value::Bool(a >= b))?;
                 }
 
@@ -796,7 +948,11 @@ impl Mvm {
                     };
                     if is_async {
                         // Collect args from stack
-                        let arg_start = if self.stack.len() >= arity { self.stack.len() - arity } else { 0 };
+                        let arg_start = if self.stack.len() >= arity {
+                            self.stack.len() - arity
+                        } else {
+                            0
+                        };
                         let args: Vec<Value> = self.stack.drain(arg_start..).collect();
 
                         // Spawn the async task on its own OS thread. The future
@@ -804,23 +960,38 @@ impl Mvm {
                         let prog = self.program.clone();
                         let result = Arc::new(Mutex::new(None));
                         let result_thread = result.clone();
-                        let handle = std::thread::Builder::new().stack_size(VM_STACK_SIZE).spawn(move || {
-                            let mut vm = Mvm::with_program(prog);
-                            match vm.run_function(func_idx, args) {
-                                Ok(v) => { *result_thread.lock().unwrap() = Some(v); }
-                                Err(e) => {
-                                    *result_thread.lock().unwrap() =
-                                        Some(Value::String(Arc::new(format!("async error: {}", e))));
+                        let handle = std::thread::Builder::new()
+                            .stack_size(VM_STACK_SIZE)
+                            .spawn(move || {
+                                let mut vm = Mvm::with_program(prog);
+                                match vm.run_function(func_idx, args) {
+                                    Ok(v) => {
+                                        *result_thread.lock().unwrap() = Some(v);
+                                    }
+                                    Err(e) => {
+                                        *result_thread.lock().unwrap() = Some(Value::String(
+                                            Arc::new(format!("async error: {}", e)),
+                                        ));
+                                    }
                                 }
-                            }
-                        }).map_err(|e| VmError::new(crate::error::TrapKind::Runtime, format!("failed to spawn async task: {}", e)))?;
+                            })
+                            .map_err(|e| {
+                                VmError::new(
+                                    crate::error::TrapKind::Runtime,
+                                    format!("failed to spawn async task: {}", e),
+                                )
+                            })?;
                         self.push(Value::Future(Arc::new(MvmFuture {
                             result,
                             handle: Mutex::new(Some(handle)),
                         })))?;
                     } else {
                         // Collect args from stack
-                        let arg_start = if self.stack.len() >= arity { self.stack.len() - arity } else { 0 };
+                        let arg_start = if self.stack.len() >= arity {
+                            self.stack.len() - arity
+                        } else {
+                            0
+                        };
                         let args: Vec<Value> = self.stack.drain(arg_start..).collect();
 
                         // Save state and call
@@ -832,7 +1003,8 @@ impl Mvm {
                         };
 
                         self.current_func = func_idx;
-                        self.current_locals = Arc::new(Mutex::new(Vec::with_capacity(call_locals_count)));
+                        self.current_locals =
+                            Arc::new(Mutex::new(Vec::with_capacity(call_locals_count)));
                         self.pc = 0;
 
                         // Set up locals: args first, then unit-filled
@@ -882,7 +1054,13 @@ impl Mvm {
                     // actual argument values on the stack.
                     let closure = match self.pop()? {
                         Value::Closure(env, thunk_idx) => (env, thunk_idx),
-                        v => return Err(format!("CallClosure expected closure, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(format!(
+                                "CallClosure expected closure, got {}",
+                                v.type_name()
+                            )
+                            .into())
+                        }
                     };
                     let (env, thunk_idx) = closure;
                     if thunk_idx >= self.program.functions.len() {
@@ -900,7 +1078,11 @@ impl Mvm {
                         (f.arity as usize, f.locals as usize, f.is_async)
                     };
                     let n_params = arity.saturating_sub(env.len());
-                    let arg_start = if self.stack.len() >= n_params { self.stack.len() - n_params } else { 0 };
+                    let arg_start = if self.stack.len() >= n_params {
+                        self.stack.len() - n_params
+                    } else {
+                        0
+                    };
                     let mut params: Vec<Value> = self.stack.drain(arg_start..).collect();
                     let mut args: Vec<Value> = Vec::with_capacity(arity);
                     args.extend(env.iter().cloned());
@@ -909,16 +1091,27 @@ impl Mvm {
                         let prog = self.program.clone();
                         let result = Arc::new(Mutex::new(None));
                         let result_thread = result.clone();
-                        let handle = std::thread::Builder::new().stack_size(VM_STACK_SIZE).spawn(move || {
-                            let mut vm = Mvm::with_program(prog);
-                            match vm.run_function(thunk_idx, args) {
-                                Ok(v) => { *result_thread.lock().unwrap() = Some(v); }
-                                Err(e) => {
-                                    *result_thread.lock().unwrap() =
-                                        Some(Value::String(Arc::new(format!("async error: {}", e))));
+                        let handle = std::thread::Builder::new()
+                            .stack_size(VM_STACK_SIZE)
+                            .spawn(move || {
+                                let mut vm = Mvm::with_program(prog);
+                                match vm.run_function(thunk_idx, args) {
+                                    Ok(v) => {
+                                        *result_thread.lock().unwrap() = Some(v);
+                                    }
+                                    Err(e) => {
+                                        *result_thread.lock().unwrap() = Some(Value::String(
+                                            Arc::new(format!("async error: {}", e)),
+                                        ));
+                                    }
                                 }
-                            }
-                        }).map_err(|e| VmError::new(crate::error::TrapKind::Runtime, format!("failed to spawn async task: {}", e)))?;
+                            })
+                            .map_err(|e| {
+                                VmError::new(
+                                    crate::error::TrapKind::Runtime,
+                                    format!("failed to spawn async task: {}", e),
+                                )
+                            })?;
                         self.push(Value::Future(Arc::new(MvmFuture {
                             result,
                             handle: Mutex::new(Some(handle)),
@@ -931,7 +1124,8 @@ impl Mvm {
                             locals: self.current_locals.clone(),
                         };
                         self.current_func = thunk_idx;
-                        self.current_locals = Arc::new(Mutex::new(Vec::with_capacity(call_locals_count)));
+                        self.current_locals =
+                            Arc::new(Mutex::new(Vec::with_capacity(call_locals_count)));
                         self.pc = 0;
                         {
                             let mut locals = self.current_locals.lock().unwrap();
@@ -958,7 +1152,9 @@ impl Mvm {
                     let arity = Self::read_u8(code, self.pc)? as usize;
                     self.pc += 1;
                     if name_idx >= self.program.strings.len() {
-                        return Err(format!("CallHost string index {} out of bounds", name_idx).into());
+                        return Err(
+                            format!("CallHost string index {} out of bounds", name_idx).into()
+                        );
                     }
                     let name = self.program.strings[name_idx].clone();
                     // Pop arity args (left-to-right order preserved).
@@ -970,9 +1166,7 @@ impl Mvm {
                     let host_args: Vec<crate::host::MivaValue> =
                         raw.into_iter().map(crate::host::MivaValue::from).collect();
                     let f = self.resolve_host(&name)?;
-                    let result = unsafe {
-                        f(host_args.as_ptr(), arity as i32)
-                    };
+                    let result = unsafe { f(host_args.as_ptr(), arity as i32) };
                     self.push(result.into_value())?;
                 }
                 Opcode::Ret => {
@@ -987,7 +1181,11 @@ impl Mvm {
                 Opcode::ArrayNew => {
                     let size = match self.pop()? {
                         Value::Int(n) => n as usize,
-                        v => return Err(format!("ArrayNew expected int, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("ArrayNew expected int, got {}", v.type_name()).into()
+                            )
+                        }
                     };
                     let mut arr = Vec::with_capacity(size);
                     for _ in 0..size {
@@ -1002,7 +1200,11 @@ impl Mvm {
                     match arr_val {
                         Value::Array(arr) => {
                             let v = arr.get(index).cloned().ok_or_else(|| {
-                                VmError::out_of_bounds(format!("ArrayGet index {} out of bounds (len={})", index, arr.len()))
+                                VmError::out_of_bounds(format!(
+                                    "ArrayGet index {} out of bounds (len={})",
+                                    index,
+                                    arr.len()
+                                ))
                             })?;
                             self.push(v)?;
                         }
@@ -1010,12 +1212,20 @@ impl Mvm {
                             let v = {
                                 let guard = arr.lock().unwrap();
                                 guard.get(index).cloned().ok_or_else(|| {
-                                    VmError::out_of_bounds(format!("ArrayGet index {} out of bounds (len={})", index, guard.len()))
+                                    VmError::out_of_bounds(format!(
+                                        "ArrayGet index {} out of bounds (len={})",
+                                        index,
+                                        guard.len()
+                                    ))
                                 })?
                             };
                             self.push(v)?;
                         }
-                        v => return Err(format!("ArrayGet expected array, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("ArrayGet expected array, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
                 Opcode::ArraySet => {
@@ -1027,11 +1237,20 @@ impl Mvm {
                             let mut guard = arr.lock().unwrap();
                             let len = guard.len();
                             let slot = guard.get_mut(index).ok_or_else(|| {
-                                VmError::out_of_bounds(format!("ArraySet index {} out of bounds (len={})", index, len))
+                                VmError::out_of_bounds(format!(
+                                    "ArraySet index {} out of bounds (len={})",
+                                    index, len
+                                ))
                             })?;
                             *slot = value;
                         }
-                        v => return Err(format!("ArraySet expected mutable array, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(format!(
+                                "ArraySet expected mutable array, got {}",
+                                v.type_name()
+                            )
+                            .into())
+                        }
                     }
                     self.push(Value::Unit)?;
                 }
@@ -1040,7 +1259,11 @@ impl Mvm {
                     let len = match arr_val {
                         Value::Array(arr) => arr.len(),
                         Value::MutableArray(arr) => arr.lock().unwrap().len(),
-                        v => return Err(format!("ArrayLen expected array, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("ArrayLen expected array, got {}", v.type_name()).into()
+                            )
+                        }
                     };
                     self.push(Value::Int(len as i64))?;
                 }
@@ -1051,7 +1274,13 @@ impl Mvm {
                         Value::MutableArray(arr) => {
                             arr.lock().unwrap().push(val);
                         }
-                        v => return Err(format!("ArrayPush expected mutable array, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(format!(
+                                "ArrayPush expected mutable array, got {}",
+                                v.type_name()
+                            )
+                            .into())
+                        }
                     }
                     self.push(Value::Unit)?;
                 }
@@ -1074,11 +1303,19 @@ impl Mvm {
                     match struct_val {
                         Value::Struct(fields) => {
                             if field_idx >= fields.len() {
-                                return Err(format!("Struct field index {} out of bounds", field_idx).into());
+                                return Err(format!(
+                                    "Struct field index {} out of bounds",
+                                    field_idx
+                                )
+                                .into());
                             }
                             self.push(fields[field_idx].clone())?;
                         }
-                        v => return Err(format!("StructGet expected struct, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("StructGet expected struct, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
                 Opcode::EnumNew => {
@@ -1091,7 +1328,11 @@ impl Mvm {
                     fields.reverse();
                     let tag = match self.pop()? {
                         Value::Int(t) => t,
-                        v => return Err(format!("EnumNew expected int tag, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("EnumNew expected int tag, got {}", v.type_name()).into()
+                            )
+                        }
                     };
                     self.push(Value::Enum(tag, Arc::new(fields)))?;
                 }
@@ -1102,11 +1343,19 @@ impl Mvm {
                     match enum_val {
                         Value::Enum(_, fields) => {
                             if field_idx >= fields.len() {
-                                return Err(format!("Enum field index {} out of bounds", field_idx).into());
+                                return Err(format!(
+                                    "Enum field index {} out of bounds",
+                                    field_idx
+                                )
+                                .into());
                             }
                             self.push(fields[field_idx].clone())?;
                         }
-                        v => return Err(format!("EnumGet expected enum, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("EnumGet expected enum, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
                 Opcode::StructSet => {
@@ -1117,12 +1366,20 @@ impl Mvm {
                     match struct_val {
                         Value::Struct(mut fields) => {
                             if field_idx >= fields.len() {
-                                return Err(format!("Struct field index {} out of bounds", field_idx).into());
+                                return Err(format!(
+                                    "Struct field index {} out of bounds",
+                                    field_idx
+                                )
+                                .into());
                             }
                             fields[field_idx] = value;
                             self.push(Value::Struct(fields))?;
                         }
-                        v => return Err(format!("StructSet expected struct, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("StructSet expected struct, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
                 Opcode::StructDupAt => {
@@ -1141,15 +1398,21 @@ impl Mvm {
                     let box_val = self.pop()?;
                     match box_val {
                         Value::Boxed(b) => self.push(b.lock().unwrap().clone())?,
-                        v => return Err(format!("BoxGet expected box, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(format!("BoxGet expected box, got {}", v.type_name()).into())
+                        }
                     }
                 }
                 Opcode::BoxSet => {
                     let val = self.pop()?;
                     let box_val = self.pop()?;
                     match box_val {
-                        Value::Boxed(b) => { *b.lock().unwrap() = val; }
-                        v => return Err(format!("BoxSet expected box, got {}", v.type_name()).into()),
+                        Value::Boxed(b) => {
+                            *b.lock().unwrap() = val;
+                        }
+                        v => {
+                            return Err(format!("BoxSet expected box, got {}", v.type_name()).into())
+                        }
                     }
                     self.push(Value::Unit)?;
                 }
@@ -1167,7 +1430,11 @@ impl Mvm {
                             let val = {
                                 let guard = locals.lock().unwrap();
                                 guard.get(idx).cloned().ok_or_else(|| {
-                                    VmError::out_of_bounds(format!("PtrLoad local index {} out of bounds (len={})", idx, guard.len()))
+                                    VmError::out_of_bounds(format!(
+                                        "PtrLoad local index {} out of bounds (len={})",
+                                        idx,
+                                        guard.len()
+                                    ))
                                 })?
                             };
                             self.push(val)?;
@@ -1175,11 +1442,19 @@ impl Mvm {
                         Value::Int(addr) => {
                             let addr = addr as usize;
                             if addr >= self.memory.len() {
-                                return Err(format!("PtrLoad: out of bounds memory access at {}", addr).into());
+                                return Err(format!(
+                                    "PtrLoad: out of bounds memory access at {}",
+                                    addr
+                                )
+                                .into());
                             }
                             self.push(self.memory[addr].clone())?;
                         }
-                        v => return Err(format!("PtrLoad expected ptr, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("PtrLoad expected ptr, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
                 Opcode::PtrStore => {
@@ -1190,7 +1465,10 @@ impl Mvm {
                             let mut guard = locals.lock().unwrap();
                             let len = guard.len();
                             let slot = guard.get_mut(idx).ok_or_else(|| {
-                                VmError::out_of_bounds(format!("PtrStore local index {} out of bounds (len={})", idx, len))
+                                VmError::out_of_bounds(format!(
+                                    "PtrStore local index {} out of bounds (len={})",
+                                    idx, len
+                                ))
                             })?;
                             *slot = val;
                         }
@@ -1201,69 +1479,108 @@ impl Mvm {
                             }
                             self.memory[addr] = val;
                         }
-                        v => return Err(format!("PtrStore expected ptr, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("PtrStore expected ptr, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                     self.push(Value::Unit)?;
                 }
 
                 // Type conversions
-                Opcode::I64ToF64 => { let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Float64(a as f64))?; }
-                Opcode::F64ToI64 => { let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Int(a as i64))?; }
-                Opcode::I64ToChar => {
-                    match self.pop()? {
-                        Value::Int(i) => self.push(Value::Char(i as u8))?,
-                        v => return Err(format!("I64ToChar expected int, got {}", v.type_name()).into()),
-                    }
+                Opcode::I64ToF64 => {
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Float64(a as f64))?;
                 }
-                Opcode::CharToI64 => {
-                    match self.pop()? {
-                        Value::Char(c) => self.push(Value::Int(c as i64))?,
-                        v => return Err(format!("CharToI64 expected char, got {}", v.type_name()).into()),
-                    }
+                Opcode::F64ToI64 => {
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Int(a as i64))?;
                 }
-                Opcode::F64ToF32 => { let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?; self.push(Value::Float32(a as f32))?; }
-                Opcode::F32ToF64 => {
-                    match self.pop()? {
-                        Value::Float32(f) => self.push(Value::Float64(f as f64))?,
-                        v => return Err(format!("F32ToF64 expected float32, got {}", v.type_name()).into()),
+                Opcode::I64ToChar => match self.pop()? {
+                    Value::Int(i) => self.push(Value::Char(i as u8))?,
+                    v => {
+                        return Err(format!("I64ToChar expected int, got {}", v.type_name()).into())
                     }
-                }
-                Opcode::I64ToBool => { let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Bool(a != 0))?; }
-                Opcode::BoolToI64 => {
-                    match self.pop()? {
-                        Value::Bool(b) => self.push(Value::Int(if b { 1 } else { 0 }))?,
-                        v => return Err(format!("BoolToI64 expected bool, got {}", v.type_name()).into()),
+                },
+                Opcode::CharToI64 => match self.pop()? {
+                    Value::Char(c) => self.push(Value::Int(c as i64))?,
+                    v => {
+                        return Err(format!("CharToI64 expected char, got {}", v.type_name()).into())
                     }
+                },
+                Opcode::F64ToF32 => {
+                    let a = self.pop()?.as_f64().ok_or_else(VmError::expected_float)?;
+                    self.push(Value::Float32(a as f32))?;
                 }
-                Opcode::I64ToF32 => { let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?; self.push(Value::Float32(a as f32))?; }
-                Opcode::F32ToI64 => {
-                    match self.pop()? {
-                        Value::Float32(f) => self.push(Value::Int(f as i64))?,
-                        v => return Err(format!("F32ToI64 expected float32, got {}", v.type_name()).into()),
+                Opcode::F32ToF64 => match self.pop()? {
+                    Value::Float32(f) => self.push(Value::Float64(f as f64))?,
+                    v => {
+                        return Err(
+                            format!("F32ToF64 expected float32, got {}", v.type_name()).into()
+                        )
                     }
+                },
+                Opcode::I64ToBool => {
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Bool(a != 0))?;
                 }
+                Opcode::BoolToI64 => match self.pop()? {
+                    Value::Bool(b) => self.push(Value::Int(if b { 1 } else { 0 }))?,
+                    v => {
+                        return Err(format!("BoolToI64 expected bool, got {}", v.type_name()).into())
+                    }
+                },
+                Opcode::I64ToF32 => {
+                    let a = self.pop()?.as_i64().ok_or_else(VmError::expected_int)?;
+                    self.push(Value::Float32(a as f32))?;
+                }
+                Opcode::F32ToI64 => match self.pop()? {
+                    Value::Float32(f) => self.push(Value::Int(f as i64))?,
+                    v => {
+                        return Err(
+                            format!("F32ToI64 expected float32, got {}", v.type_name()).into()
+                        )
+                    }
+                },
 
                 // String operations
                 Opcode::StrConcat => {
-                    let b = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("StrConcat expected string, got {}", v.type_name()).into()) };
-                    let a = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("StrConcat expected string, got {}", v.type_name()).into()) };
+                    let b = match self.pop()? {
+                        Value::String(s) => (*s).clone(),
+                        v => {
+                            return Err(
+                                format!("StrConcat expected string, got {}", v.type_name()).into()
+                            )
+                        }
+                    };
+                    let a = match self.pop()? {
+                        Value::String(s) => (*s).clone(),
+                        v => {
+                            return Err(
+                                format!("StrConcat expected string, got {}", v.type_name()).into()
+                            )
+                        }
+                    };
                     self.push(Value::String(Arc::new(a + &b)))?;
                 }
-                Opcode::StrLen => {
-                    match self.pop()? {
-                        Value::String(s) => self.push(Value::Int(s.len() as i64))?,
-                        v => return Err(format!("StrLen expected string, got {}", v.type_name()).into()),
+                Opcode::StrLen => match self.pop()? {
+                    Value::String(s) => self.push(Value::Int(s.len() as i64))?,
+                    v => {
+                        return Err(format!("StrLen expected string, got {}", v.type_name()).into())
                     }
-                }
-                Opcode::StrParse => {
-                    match self.pop()? {
-                        Value::String(s) => {
-                            let n = s.trim().parse::<i64>().unwrap_or(0);
-                            self.push(Value::Int(n))?;
-                        }
-                        v => return Err(format!("StrParse expected string, got {}", v.type_name()).into()),
+                },
+                Opcode::StrParse => match self.pop()? {
+                    Value::String(s) => {
+                        let n = s.trim().parse::<i64>().unwrap_or(0);
+                        self.push(Value::Int(n))?;
                     }
-                }
+                    v => {
+                        return Err(
+                            format!("StrParse expected string, got {}", v.type_name()).into()
+                        )
+                    }
+                },
                 Opcode::StrMake => {
                     let len = self.pop()?.as_i64().ok_or("StrMake expected int length")? as usize;
                     match self.pop()? {
@@ -1271,7 +1588,11 @@ impl Mvm {
                             let s: String = std::iter::repeat(c as char).take(len).collect();
                             self.push(Value::String(Arc::new(s)))?;
                         }
-                        v => return Err(format!("StrMake expected char, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("StrMake expected char, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
                 Opcode::StrFrom => {
@@ -1285,39 +1606,35 @@ impl Mvm {
                             let c = s.chars().nth(idx).unwrap_or('\0');
                             self.push(Value::Char(c as u8))?;
                         }
-                        v => return Err(format!("StrGet expected string, got {}", v.type_name()).into()),
+                        v => {
+                            return Err(
+                                format!("StrGet expected string, got {}", v.type_name()).into()
+                            )
+                        }
                     }
                 }
 
                 // I/O builtins implemented as opcodes
                 Opcode::Print => print!("{}", self.pop()?.display()),
-                Opcode::Prints => {
-                    match self.pop()? {
-                        Value::String(s) => print!("{}", s),
-                        v => print!("{}", v.display()),
-                    }
-                }
+                Opcode::Prints => match self.pop()? {
+                    Value::String(s) => print!("{}", s),
+                    v => print!("{}", v.display()),
+                },
                 Opcode::Println => println!("{}", self.pop()?.display()),
-                Opcode::Printlns => {
-                    match self.pop()? {
-                        Value::String(s) => println!("{}", s),
-                        v => println!("{}", v.display()),
-                    }
-                }
+                Opcode::Printlns => match self.pop()? {
+                    Value::String(s) => println!("{}", s),
+                    v => println!("{}", v.display()),
+                },
                 Opcode::Error => eprint!("{}", self.pop()?.display()),
-                Opcode::Errors => {
-                    match self.pop()? {
-                        Value::String(s) => eprint!("{}", s),
-                        v => eprint!("{}", v.display()),
-                    }
-                }
+                Opcode::Errors => match self.pop()? {
+                    Value::String(s) => eprint!("{}", s),
+                    v => eprint!("{}", v.display()),
+                },
                 Opcode::Errorln => eprintln!("{}", self.pop()?.display()),
-                Opcode::Errorlns => {
-                    match self.pop()? {
-                        Value::String(s) => eprintln!("{}", s),
-                        v => eprintln!("{}", v.display()),
-                    }
-                }
+                Opcode::Errorlns => match self.pop()? {
+                    Value::String(s) => eprintln!("{}", s),
+                    v => eprintln!("{}", v.display()),
+                },
                 Opcode::Exit => {
                     self.exit_code = self.pop()?.as_i64().unwrap_or(0);
                     self.halted = true;
@@ -1344,7 +1661,9 @@ impl Mvm {
                 Opcode::ReadLine => {
                     let mut line = String::new();
                     io::stdin().lock().read_line(&mut line).ok();
-                    if line.ends_with('\n') { line.pop(); }
+                    if line.ends_with('\n') {
+                        line.pop();
+                    }
                     self.push(Value::String(Arc::new(line)))?;
                 }
 
@@ -1354,23 +1673,25 @@ impl Mvm {
                     let start = self.pop()?.as_i64().ok_or("RangeNew expected int start")?;
                     self.push(Value::Range(start, end, start))?;
                 }
-                Opcode::RangeNext => {
-                    match self.pop()? {
-                        Value::Range(start, end, current) => {
-                            if current < end {
-                                let next = current + 1;
-                                self.push(Value::Range(start, end, next))?;
-                                self.push(Value::Bool(true))?;
-                                self.push(Value::Int(current))?;
-                            } else {
-                                self.push(Value::Range(start, end, current))?;
-                                self.push(Value::Bool(false))?;
-                                self.push(Value::Unit)?;
-                            }
+                Opcode::RangeNext => match self.pop()? {
+                    Value::Range(start, end, current) => {
+                        if current < end {
+                            let next = current + 1;
+                            self.push(Value::Range(start, end, next))?;
+                            self.push(Value::Bool(true))?;
+                            self.push(Value::Int(current))?;
+                        } else {
+                            self.push(Value::Range(start, end, current))?;
+                            self.push(Value::Bool(false))?;
+                            self.push(Value::Unit)?;
                         }
-                        v => return Err(format!("RangeNext expected range, got {}", v.type_name()).into()),
                     }
-                }
+                    v => {
+                        return Err(
+                            format!("RangeNext expected range, got {}", v.type_name()).into()
+                        )
+                    }
+                },
 
                 Opcode::Halt => {
                     self.halted = true;
@@ -1378,10 +1699,12 @@ impl Mvm {
                 }
                 Opcode::Debug => {
                     eprintln!("--- MVM Debug ---");
-                    eprintln!("PC: {}, Function: {}, Stack depth: {}",
+                    eprintln!(
+                        "PC: {}, Function: {}, Stack depth: {}",
                         self.pc,
                         self.program.functions[self.current_func].name(&self.program.strings),
-                        self.stack.len());
+                        self.stack.len()
+                    );
                     eprintln!("Stack ({}) items:", self.stack.len());
                     for (i, v) in self.stack.iter().enumerate() {
                         eprintln!("  [{}] {} ({})", i, v.display(), v.type_name());
@@ -1415,7 +1738,6 @@ impl Mvm {
             }
         }
     }
-
 }
 
 mod call_builtin;

@@ -1,18 +1,27 @@
 use crate::ast::*;
 use crate::error::Error;
 
-pub(crate) fn seal_check_expr(expr: &Expr, sealed: &std::collections::HashSet<&str>, errs: &mut Vec<Error>) {
+pub(crate) fn seal_check_expr(
+    expr: &Expr,
+    sealed: &std::collections::HashSet<&str>,
+    errs: &mut Vec<Error>,
+) {
     match expr {
         Expr::EVar { loc, name } => {
             if sealed.contains(name.as_str()) {
                 errs.push(Error::new(
                     "E0034",
                     loc,
-                    &format!("drop function '{}' is sealed and cannot be used as a value", name),
+                    &format!(
+                        "drop function '{}' is sealed and cannot be used as a value",
+                        name
+                    ),
                 ));
             }
         }
-        Expr::ECall { loc, name, args, .. } => {
+        Expr::ECall {
+            loc, name, args, ..
+        } => {
             if sealed.contains(name.as_str()) {
                 errs.push(Error::new(
                     "E0034",
@@ -48,14 +57,21 @@ pub(crate) fn seal_check_expr(expr: &Expr, sealed: &std::collections::HashSet<&s
             seal_check_expr(left, sealed, errs);
             seal_check_expr(right, sealed, errs);
         }
-        Expr::EIf { cond, then, else_, .. } => {
+        Expr::EIf {
+            cond, then, else_, ..
+        } => {
             seal_check_expr(cond, sealed, errs);
             seal_check_expr(then, sealed, errs);
             if let Some(e) = else_ {
                 seal_check_expr(e, sealed, errs);
             }
         }
-        Expr::EChoose { var, cases, otherwise, .. } => {
+        Expr::EChoose {
+            var,
+            cases,
+            otherwise,
+            ..
+        } => {
             seal_check_expr(var, sealed, errs);
             for c in cases {
                 seal_check_expr(&c.when, sealed, errs);
@@ -110,7 +126,11 @@ pub(crate) fn seal_check_expr(expr: &Expr, sealed: &std::collections::HashSet<&s
     }
 }
 
-pub(crate) fn seal_check_stmt(stmt: &Stmt, sealed: &std::collections::HashSet<&str>, errs: &mut Vec<Error>) {
+pub(crate) fn seal_check_stmt(
+    stmt: &Stmt,
+    sealed: &std::collections::HashSet<&str>,
+    errs: &mut Vec<Error>,
+) {
     match stmt {
         Stmt::SLet { expr, .. }
         | Stmt::SLetTuple { expr, .. }
@@ -125,4 +145,3 @@ pub(crate) fn seal_check_stmt(stmt: &Stmt, sealed: &std::collections::HashSet<&s
         Stmt::SCIntro { .. } | Stmt::SEmpty { .. } => {}
     }
 }
-

@@ -38,7 +38,14 @@ impl Error {
 ///   |             ^^^^^^^
 /// ```
 pub fn format_error_with_source(err: &Error, file_path: &str, source: &str) -> String {
-    format_diagnostic_with_source("error", &err.code, &err.message, &err.loc, file_path, source)
+    format_diagnostic_with_source(
+        "error",
+        &err.code,
+        &err.message,
+        &err.loc,
+        file_path,
+        source,
+    )
 }
 
 /// Shared Rust-style rendering for errors and warnings: severity header,
@@ -79,11 +86,7 @@ mod tests {
 
     #[test]
     fn test_format_error_with_source() {
-        let err = Error::new(
-            "E0001",
-            &Loc { line: 2, col: 5 },
-            "use of moved value",
-        );
+        let err = Error::new("E0001", &Loc { line: 2, col: 5 }, "use of moved value");
         let source = "let x = 1;\nlet y = move(x);\nlet z = x;";
         let result = format_error_with_source(&err, "test.miva", source);
         assert!(result.contains("error[E0001]: use of moved value"));
@@ -105,11 +108,7 @@ mod tests {
 
     #[test]
     fn test_format_error_caret_at_correct_position() {
-        let err = Error::new(
-            "E0002",
-            &Loc { line: 1, col: 4 },
-            "immutable variable",
-        );
+        let err = Error::new("E0002", &Loc { line: 1, col: 4 }, "immutable variable");
         let source = "    x = 5";
         let result = format_error_with_source(&err, "test.miva", source);
         assert!(result.contains("immutable variable"));

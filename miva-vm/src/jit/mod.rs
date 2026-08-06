@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use cranelift_codegen::ir::{AbiParam, ExtFuncData, Function, Signature, UserExternalNameRef, types};
+use cranelift_codegen::ir::{
+    types, AbiParam, ExtFuncData, Function, Signature, UserExternalNameRef,
+};
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::Context;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -116,27 +118,49 @@ impl JitCompiler {
         sig_ret_f64.params.push(AbiParam::new(types::I64));
         sig_ret_f64.returns.push(AbiParam::new(types::F64));
 
-        let jit_push_int_id = self.module.declare_function("jit_push_int", Linkage::Import, &sig_i)
+        let jit_push_int_id = self
+            .module
+            .declare_function("jit_push_int", Linkage::Import, &sig_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_push_f64_id = self.module.declare_function("jit_push_f64", Linkage::Import, &sig_f64)
+        let jit_push_f64_id = self
+            .module
+            .declare_function("jit_push_f64", Linkage::Import, &sig_f64)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_push_bool_id = self.module.declare_function("jit_push_bool", Linkage::Import, &sig_i)
+        let jit_push_bool_id = self
+            .module
+            .declare_function("jit_push_bool", Linkage::Import, &sig_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_push_unit_id = self.module.declare_function("jit_push_unit", Linkage::Import, &sig_i)
+        let jit_push_unit_id = self
+            .module
+            .declare_function("jit_push_unit", Linkage::Import, &sig_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_push_null_id = self.module.declare_function("jit_push_null", Linkage::Import, &sig_i)
+        let jit_push_null_id = self
+            .module
+            .declare_function("jit_push_null", Linkage::Import, &sig_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_dup_id = self.module.declare_function("jit_dup", Linkage::Import, &sig_i)
+        let jit_dup_id = self
+            .module
+            .declare_function("jit_dup", Linkage::Import, &sig_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_pop_int_id = self.module.declare_function("jit_pop_int", Linkage::Import, &sig_ret_i)
+        let jit_pop_int_id = self
+            .module
+            .declare_function("jit_pop_int", Linkage::Import, &sig_ret_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_pop_f64_id = self.module.declare_function("jit_pop_f64", Linkage::Import, &sig_ret_f64)
+        let jit_pop_f64_id = self
+            .module
+            .declare_function("jit_pop_f64", Linkage::Import, &sig_ret_f64)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_pop_bool_id = self.module.declare_function("jit_pop_bool", Linkage::Import, &sig_ret_i)
+        let jit_pop_bool_id = self
+            .module
+            .declare_function("jit_pop_bool", Linkage::Import, &sig_ret_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_load_local_int_id = self.module.declare_function("jit_load_local_int", Linkage::Import, &sig_ret_i)
+        let jit_load_local_int_id = self
+            .module
+            .declare_function("jit_load_local_int", Linkage::Import, &sig_ret_i)
             .map_err(|e| format!("{:?}", e))?;
-        let jit_store_local_int_id = self.module.declare_function("jit_store_local_int", Linkage::Import, &sig_i)
+        let jit_store_local_int_id = self
+            .module
+            .declare_function("jit_store_local_int", Linkage::Import, &sig_i)
             .map_err(|e| format!("{:?}", e))?;
 
         let mut ctx = Context::for_function(Function::with_name_signature(
@@ -151,7 +175,9 @@ impl JitCompiler {
         let sig_ref_ret_f64 = func_ctx.import_signature(sig_ret_f64);
 
         let make_ext = |func_id: FuncId, sig_ref| ExtFuncData {
-            name: cranelift_codegen::ir::ExternalName::User(UserExternalNameRef::from_u32(func_id.as_u32())),
+            name: cranelift_codegen::ir::ExternalName::User(UserExternalNameRef::from_u32(
+                func_id.as_u32(),
+            )),
             signature: sig_ref,
             colocated: false,
         };
@@ -165,8 +191,10 @@ impl JitCompiler {
         let jit_pop_int_ref = func_ctx.import_function(make_ext(jit_pop_int_id, sig_ref_ret_i));
         let jit_pop_f64_ref = func_ctx.import_function(make_ext(jit_pop_f64_id, sig_ref_ret_f64));
         let jit_pop_bool_ref = func_ctx.import_function(make_ext(jit_pop_bool_id, sig_ref_ret_i));
-        let jit_load_local_int_ref = func_ctx.import_function(make_ext(jit_load_local_int_id, sig_ref_ret_i));
-        let jit_store_local_int_ref = func_ctx.import_function(make_ext(jit_store_local_int_id, sig_ref_i));
+        let jit_load_local_int_ref =
+            func_ctx.import_function(make_ext(jit_load_local_int_id, sig_ref_ret_i));
+        let jit_store_local_int_ref =
+            func_ctx.import_function(make_ext(jit_store_local_int_id, sig_ref_i));
 
         let helpers = HelperFunctions {
             jit_push_int: jit_push_int_ref,
@@ -217,7 +245,10 @@ pub struct HelperFunctions {
 pub extern "C" fn jit_push_int(ctx: *mut VmContext, val: i64) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack overflow");
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -230,7 +261,10 @@ pub extern "C" fn jit_push_int(ctx: *mut VmContext, val: i64) {
 pub extern "C" fn jit_push_f64(ctx: *mut VmContext, val: f64) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack overflow");
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -243,7 +277,10 @@ pub extern "C" fn jit_push_f64(ctx: *mut VmContext, val: f64) {
 pub extern "C" fn jit_push_bool(ctx: *mut VmContext, val: bool) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack overflow");
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -256,7 +293,10 @@ pub extern "C" fn jit_push_bool(ctx: *mut VmContext, val: bool) {
 pub extern "C" fn jit_push_unit(ctx: *mut VmContext) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack overflow");
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -269,7 +309,10 @@ pub extern "C" fn jit_push_unit(ctx: *mut VmContext) {
 pub extern "C" fn jit_push_null(ctx: *mut VmContext) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len >= ctx.stack_cap {
-        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack overflow");
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
@@ -282,10 +325,16 @@ pub extern "C" fn jit_push_null(ctx: *mut VmContext) {
 pub extern "C" fn jit_dup(ctx: *mut VmContext) {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack underflow");
+            std::process::abort();
+        }
     }
     if ctx.stack_len >= ctx.stack_cap {
-        { eprintln!("MVM JIT trap: stack overflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack overflow");
+            std::process::abort();
+        }
     }
     unsafe {
         let src = ctx.stack_ptr.add(ctx.stack_len - 1);
@@ -299,14 +348,20 @@ pub extern "C" fn jit_dup(ctx: *mut VmContext) {
 pub extern "C" fn jit_pop_int(ctx: *mut VmContext) -> i64 {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack underflow");
+            std::process::abort();
+        }
     }
     ctx.stack_len -= 1;
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
         match *slot {
             Value::Int(v) => v,
-            _ => { eprintln!("MVM JIT trap: jit_pop_int: expected Int"); std::process::abort(); }
+            _ => {
+                eprintln!("MVM JIT trap: jit_pop_int: expected Int");
+                std::process::abort();
+            }
         }
     }
 }
@@ -315,14 +370,20 @@ pub extern "C" fn jit_pop_int(ctx: *mut VmContext) -> i64 {
 pub extern "C" fn jit_pop_f64(ctx: *mut VmContext) -> f64 {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack underflow");
+            std::process::abort();
+        }
     }
     ctx.stack_len -= 1;
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
         match *slot {
             Value::Float64(v) => v,
-            _ => { eprintln!("MVM JIT trap: jit_pop_f64: expected Float64"); std::process::abort(); }
+            _ => {
+                eprintln!("MVM JIT trap: jit_pop_f64: expected Float64");
+                std::process::abort();
+            }
         }
     }
 }
@@ -331,14 +392,20 @@ pub extern "C" fn jit_pop_f64(ctx: *mut VmContext) -> f64 {
 pub extern "C" fn jit_pop_bool(ctx: *mut VmContext) -> bool {
     let ctx = unsafe { &mut *ctx };
     if ctx.stack_len == 0 {
-        { eprintln!("MVM JIT trap: stack underflow"); std::process::abort(); }
+        {
+            eprintln!("MVM JIT trap: stack underflow");
+            std::process::abort();
+        }
     }
     ctx.stack_len -= 1;
     unsafe {
         let slot = ctx.stack_ptr.add(ctx.stack_len);
         match *slot {
             Value::Bool(v) => v,
-            _ => { eprintln!("MVM JIT trap: jit_pop_bool: expected Bool"); std::process::abort(); }
+            _ => {
+                eprintln!("MVM JIT trap: jit_pop_bool: expected Bool");
+                std::process::abort();
+            }
         }
     }
 }
@@ -348,13 +415,25 @@ pub extern "C" fn jit_load_local_int(ctx: *mut VmContext, idx: u32) -> i64 {
     let ctx = unsafe { &mut *ctx };
     let idx = idx as usize;
     if idx >= ctx.locals_len {
-        { eprintln!("MVM JIT trap: jit_load_local_int: index {} out of bounds", idx); std::process::abort(); }
+        {
+            eprintln!(
+                "MVM JIT trap: jit_load_local_int: index {} out of bounds",
+                idx
+            );
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.locals_ptr.add(idx);
         match *slot {
             Value::Int(v) => v,
-            _ => { eprintln!("MVM JIT trap: jit_load_local_int: expected Int at index {}", idx); std::process::abort(); }
+            _ => {
+                eprintln!(
+                    "MVM JIT trap: jit_load_local_int: expected Int at index {}",
+                    idx
+                );
+                std::process::abort();
+            }
         }
     }
 }
@@ -364,7 +443,13 @@ pub extern "C" fn jit_store_local_int(ctx: *mut VmContext, idx: u32, val: i64) {
     let ctx = unsafe { &mut *ctx };
     let idx = idx as usize;
     if idx >= ctx.locals_len {
-        { eprintln!("MVM JIT trap: jit_store_local_int: index {} out of bounds", idx); std::process::abort(); }
+        {
+            eprintln!(
+                "MVM JIT trap: jit_store_local_int: index {} out of bounds",
+                idx
+            );
+            std::process::abort();
+        }
     }
     unsafe {
         let slot = ctx.locals_ptr.add(idx);

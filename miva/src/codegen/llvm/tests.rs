@@ -7,7 +7,10 @@ fn loc() -> Loc {
 }
 
 fn int(v: i64) -> Expr {
-    Expr::EInt { loc: loc(), value: v }
+    Expr::EInt {
+        loc: loc(),
+        value: v,
+    }
 }
 
 #[test]
@@ -15,7 +18,12 @@ fn test_inner_block_let_does_not_clobber_outer_binding() {
     let mut ctx = LlvmCtx::new();
     let mut body = String::new();
     gen_stmt(
-        &Stmt::SLet { loc: loc(), mutable: false, name: "s".into(), expr: Box::new(int(1)) },
+        &Stmt::SLet {
+            loc: loc(),
+            mutable: false,
+            name: "s".into(),
+            expr: Box::new(int(1)),
+        },
         &mut ctx,
         &mut body,
     );
@@ -24,13 +32,25 @@ fn test_inner_block_let_does_not_clobber_outer_binding() {
     let inner_block = Expr::EBlock {
         loc: loc(),
         stmts: vec![
-            Stmt::SLet { loc: loc(), mutable: true, name: "s".into(), expr: Box::new(int(2)) },
-            Stmt::SAssign { loc: loc(), name: "s".into(), expr: Box::new(int(3)) },
+            Stmt::SLet {
+                loc: loc(),
+                mutable: true,
+                name: "s".into(),
+                expr: Box::new(int(2)),
+            },
+            Stmt::SAssign {
+                loc: loc(),
+                name: "s".into(),
+                expr: Box::new(int(3)),
+            },
         ],
         result: None,
     };
     gen_stmt(
-        &Stmt::SExpr { loc: loc(), expr: Box::new(inner_block) },
+        &Stmt::SExpr {
+            loc: loc(),
+            expr: Box::new(inner_block),
+        },
         &mut ctx,
         &mut body,
     );
@@ -51,7 +71,10 @@ fn test_for_over_array_literal_iterates_elements() {
             loc: loc(),
             mutable: false,
             name: "arr".into(),
-            expr: Box::new(Expr::EArrayLit { loc: loc(), values: vec![int(7), int(8)] }),
+            expr: Box::new(Expr::EArrayLit {
+                loc: loc(),
+                values: vec![int(7), int(8)],
+            }),
         },
         &mut ctx,
         &mut body,
@@ -59,8 +82,15 @@ fn test_for_over_array_literal_iterates_elements() {
     let for_expr = Expr::EFor {
         loc: loc(),
         var: "x".into(),
-        range: Box::new(Expr::EVar { loc: loc(), name: "arr".into() }),
-        body: Box::new(Expr::EBlock { loc: loc(), stmts: vec![], result: None }),
+        range: Box::new(Expr::EVar {
+            loc: loc(),
+            name: "arr".into(),
+        }),
+        body: Box::new(Expr::EBlock {
+            loc: loc(),
+            stmts: vec![],
+            result: None,
+        }),
     };
     gen_expr(&for_expr, &mut ctx, &mut body);
 

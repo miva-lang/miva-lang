@@ -155,8 +155,7 @@ impl MvmCodegen {
         let before = self.code.len();
         self.code.extend_from_slice(&v.to_le_bytes());
         let after = self.code.len();
-        if after - before != 4 {
-        }
+        if after - before != 4 {}
     }
 
     fn emit_i64(&mut self, v: i64) {
@@ -176,7 +175,13 @@ impl MvmCodegen {
     fn new_label(&mut self) -> u32 {
         let id = self.next_label;
         self.next_label += 1;
-        self.labels.insert(id, Label { pos: None, pending: Vec::new() });
+        self.labels.insert(
+            id,
+            Label {
+                pos: None,
+                pending: Vec::new(),
+            },
+        );
         id
     }
 
@@ -257,14 +262,16 @@ impl MvmCodegen {
     fn declare_local(&mut self, name: &str) -> u32 {
         let idx = self.locals_count;
         self.locals_count += 1;
-        self.local_indices.entry(name.to_string())
+        self.local_indices
+            .entry(name.to_string())
             .or_default()
             .push(idx as u32);
         idx as u32
     }
 
     fn resolve_local(&self, name: &str) -> Option<u32> {
-        self.local_indices.get(name)
+        self.local_indices
+            .get(name)
             .and_then(|indices| indices.last().copied())
     }
 
@@ -274,7 +281,8 @@ impl MvmCodegen {
         for def in defs {
             match def {
                 Def::DStruct { name, fields, .. } => {
-                    let indexed: Vec<(String, usize)> = fields.iter()
+                    let indexed: Vec<(String, usize)> = fields
+                        .iter()
                         .enumerate()
                         .map(|(i, f)| (f.name.clone(), i))
                         .collect();
@@ -283,7 +291,8 @@ impl MvmCodegen {
                 }
                 Def::DShape { name, fields, .. } => {
                     // Shapes are treated similarly to structs for runtime field access
-                    let indexed: Vec<(String, usize)> = fields.iter()
+                    let indexed: Vec<(String, usize)> = fields
+                        .iter()
                         .enumerate()
                         .map(|(i, f)| (f.name.clone(), i))
                         .collect();
@@ -291,13 +300,16 @@ impl MvmCodegen {
                     self.struct_defs.insert(name.clone(), fields.clone());
                 }
                 Def::DEnum { name, variants, .. } => {
-                    let indexed: Vec<(String, usize)> = variants.iter()
+                    let indexed: Vec<(String, usize)> = variants
+                        .iter()
                         .enumerate()
                         .map(|(i, v)| (v.name.clone(), i))
                         .collect();
                     self.struct_field_indices.insert(name.clone(), indexed);
                 }
-                Def::DImpl { struct_name, impls, .. } => {
+                Def::DImpl {
+                    struct_name, impls, ..
+                } => {
                     let ops = self.impl_map.entry(struct_name.clone()).or_default();
                     for impl_expr in impls {
                         let op_name = match impl_expr.op {
@@ -341,11 +353,18 @@ impl MvmCodegen {
                     });
                     continue;
                 }
-                Def::DFunc { name, params, is_async, returns, .. } => {
+                Def::DFunc {
+                    name,
+                    params,
+                    is_async,
+                    returns,
+                    ..
+                } => {
                     let idx = cg.functions.len();
                     // Compute the qualified function name so calls like
                     // `mvp_std.mutex.free` resolve to the correct slot.
-                    let qual_name = current_module.as_ref()
+                    let qual_name = current_module
+                        .as_ref()
                         .map(|mod_| format!("{}.{}", mod_, name))
                         .unwrap_or_else(|| name.clone());
                     // Register under both the qualified name and the bare name.
@@ -377,9 +396,11 @@ impl MvmCodegen {
                     // Use the qualified function name as the key so that
                     // void_ref_params / func_ref_params lookups inside the
                     // function body use the right entry.
-                    cg.func_ref_params.insert(qual_name.clone(), ref_param_names.clone());
+                    cg.func_ref_params
+                        .insert(qual_name.clone(), ref_param_names.clone());
                     if returns.is_none() && !ref_param_names.is_empty() {
-                        cg.void_ref_params.insert(qual_name.clone(), ref_param_names.clone());
+                        cg.void_ref_params
+                            .insert(qual_name.clone(), ref_param_names.clone());
                         let bare = name.rsplit('.').next().unwrap_or(name);
                         if !cg.void_ref_params.contains_key(bare) {
                             cg.void_ref_params.insert(bare.to_string(), ref_param_names);
@@ -399,7 +420,13 @@ impl MvmCodegen {
                         });
                     }
                 }
-                Def::DCFuncUnsafe { name, params, returns, code, .. } => {
+                Def::DCFuncUnsafe {
+                    name,
+                    params,
+                    returns,
+                    code,
+                    ..
+                } => {
                     if !cg.host_funcs.contains(name) {
                         cg.host_funcs.insert(name.clone());
                         cg.host_defs.push(HostDef {
@@ -427,8 +454,15 @@ impl MvmCodegen {
                         name.clone()
                     });
                 }
-                Def::DFunc { name, params, returns, body, .. } => {
-                    let qual_name = current_module.as_ref()
+                Def::DFunc {
+                    name,
+                    params,
+                    returns,
+                    body,
+                    ..
+                } => {
+                    let qual_name = current_module
+                        .as_ref()
                         .map(|mod_| format!("{}.{}", mod_, name))
                         .unwrap_or_else(|| name.clone());
                     let func_idx = cg.func_indices[&qual_name];
@@ -448,7 +482,9 @@ impl MvmCodegen {
         // A function may be registered under both its qualified and bare name;
         // write qualified names first so the bare name wins deterministically
         // (the VM resolves the entry point by looking up the bare "main").
-        let mut func_names: Vec<(String, usize)> = cg.func_indices.iter()
+        let mut func_names: Vec<(String, usize)> = cg
+            .func_indices
+            .iter()
             .map(|(name, &idx)| (name.clone(), idx))
             .collect();
         func_names.sort_by_key(|(name, _)| (!name.contains('.'), name.clone()));
@@ -465,7 +501,14 @@ impl MvmCodegen {
         (program, cg.host_defs)
     }
 
-    fn compile_function(&mut self, func_idx: usize, params: &[Param], body: &Expr, _is_test: bool, returns: &Option<Typ>) {
+    fn compile_function(
+        &mut self,
+        func_idx: usize,
+        params: &[Param],
+        body: &Expr,
+        _is_test: bool,
+        returns: &Option<Typ>,
+    ) {
         // Reset state for new function
         self.code = Vec::new();
         self.locals_count = 0;
@@ -525,8 +568,8 @@ impl MvmCodegen {
         // tracked last-emitted opcode so a multi-byte instruction's operand
         // byte (e.g. CallBuiltin's u8 index) is never mistaken for a terminal
         // Ret/RetVal opcode.
-        let needs_ret = !self.code.is_empty()
-            && !matches!(self.last_emitted, Some(MvmOp::Ret | MvmOp::RetVal));
+        let needs_ret =
+            !self.code.is_empty() && !matches!(self.last_emitted, Some(MvmOp::Ret | MvmOp::RetVal));
         if needs_ret {
             if returns.is_none() {
                 let ref_param_names = self.func_ref_params.get(&self.current_func_name);
@@ -614,8 +657,8 @@ impl MvmCodegen {
         self.compile_expr(&body_expr);
         self.pop_scope();
 
-        let needs_ret = !self.code.is_empty()
-            && !matches!(self.last_emitted, Some(MvmOp::Ret | MvmOp::RetVal));
+        let needs_ret =
+            !self.code.is_empty() && !matches!(self.last_emitted, Some(MvmOp::Ret | MvmOp::RetVal));
         if needs_ret {
             self.emit_op(MvmOp::RetVal);
         }
@@ -632,8 +675,7 @@ impl MvmCodegen {
 
     fn compile_expr(&mut self, expr: &Expr) {
         if let Expr::EVar { name, .. } = expr {
-            if name == "Shape" {
-            }
+            if name == "Shape" {}
         }
         match expr {
             Expr::EInt { value, .. } => {
@@ -662,13 +704,15 @@ impl MvmCodegen {
                 self.emit_u32(str_idx);
             }
             Expr::EVar { name, .. } | Expr::EMove { name, .. } => {
-                let idx = self.resolve_local(name)
+                let idx = self
+                    .resolve_local(name)
                     .unwrap_or_else(|| panic!("Variable '{}' not found in scope", name));
                 self.emit_op(MvmOp::LoadLocal);
                 self.emit_u32(idx);
             }
             Expr::EClone { name, .. } => {
-                let idx = self.resolve_local(name)
+                let idx = self
+                    .resolve_local(name)
                     .unwrap_or_else(|| panic!("Variable '{}' not found in scope", name));
                 self.emit_op(MvmOp::LoadLocal);
                 self.emit_u32(idx);
@@ -676,13 +720,19 @@ impl MvmCodegen {
             }
             Expr::EStructLit { name, fields, .. } => {
                 // Look up struct field definitions to determine field order
-                let field_count = self.struct_field_indices.get(name).map(|fl| fl.len()).unwrap_or(0);
+                let field_count = self
+                    .struct_field_indices
+                    .get(name)
+                    .map(|fl| fl.len())
+                    .unwrap_or(0);
                 if field_count > 0 {
                     // Emit field values in struct definition order
                     if let Some(field_list) = self.struct_field_indices.get(name) {
                         let mut field_values = vec![None; field_list.len()];
                         for field in fields {
-                            if let Some(&(_, idx)) = field_list.iter().find(|(fname, _)| *fname == field.name) {
+                            if let Some(&(_, idx)) =
+                                field_list.iter().find(|(fname, _)| *fname == field.name)
+                            {
                                 field_values[idx] = Some(&field.value);
                             }
                         }
@@ -699,13 +749,21 @@ impl MvmCodegen {
                     self.emit_op(MvmOp::PushUnit);
                 }
             }
-            Expr::EFieldAccess { expr: obj, field, .. } => {
+            Expr::EFieldAccess {
+                expr: obj, field, ..
+            } => {
                 // Enum discriminant: `Shape.Circle` where `Shape` is an enum type
                 // name (not a variable) and `Circle` is a variant. Emit the variant
                 // tag directly as a constant for pattern matching.
-                if let Expr::EVar { name: enum_name, .. } = obj.as_ref() {
+                if let Expr::EVar {
+                    name: enum_name, ..
+                } = obj.as_ref()
+                {
                     if let Some(variant_list) = self.struct_field_indices.get(enum_name) {
-                        if let Some(&(_, tag)) = variant_list.iter().find(|(vname, _)| *vname == field.as_str()) {
+                        if let Some(&(_, tag)) = variant_list
+                            .iter()
+                            .find(|(vname, _)| *vname == field.as_str())
+                        {
                             // Emit a unit enum value `Enum(tag, [])` for pattern matching.
                             // EnumNew expects [tag] (no payloads).
                             self.emit_op(MvmOp::PushI64);
@@ -717,13 +775,13 @@ impl MvmCodegen {
                     }
                 }
                 if field.chars().all(|c| c.is_ascii_digit()) {
-                    let is_tuple = matches!(&obj.as_ref(), Expr::EVar { name, .. } if matches!(self.var_types.get(name), Some(Typ::TTuple { .. })));
+                    // Numeric field access is only ever a tuple index: tuples
+                    // lower to structs in MVM (field 0 onward), while enum
+                    // payloads are destructured via choose/when, never `.N`.
+                    // Guessing from var_types is unreliable (SLet-bound values
+                    // have no recorded type here), so always emit StructGet.
                     self.compile_expr(obj);
-                    if is_tuple {
-                        self.emit_op(MvmOp::StructGet);
-                    } else {
-                        self.emit_op(MvmOp::EnumGet);
-                    }
+                    self.emit_op(MvmOp::StructGet);
                     self.emit_u32(field.parse::<u32>().unwrap());
                 } else {
                     self.compile_expr(obj);
@@ -742,13 +800,17 @@ impl MvmCodegen {
                     }
                 }
             }
-            Expr::EBinOp { op, left, right, .. } => {
+            Expr::EBinOp {
+                op, left, right, ..
+            } => {
                 // Check if this operation has an impl override
                 if let Some(op_name) = self.find_impl_override(left, op) {
                     // Transform to function call
                     self.compile_expr(left);
                     self.compile_expr(right);
-                    let func_idx = *self.func_indices.get(&op_name)
+                    let func_idx = *self
+                        .func_indices
+                        .get(&op_name)
                         .expect(&format!("Impl function '{}' not found", op_name));
                     self.emit_op(MvmOp::Call);
                     self.emit_u32(func_idx as u32);
@@ -758,7 +820,9 @@ impl MvmCodegen {
                     self.emit_binop(op);
                 }
             }
-            Expr::EIf { cond, then, else_, .. } => {
+            Expr::EIf {
+                cond, then, else_, ..
+            } => {
                 let else_label = self.new_label();
                 let end_label = self.new_label();
 
@@ -786,7 +850,9 @@ impl MvmCodegen {
                 // tag-only discriminant `Enum(tag, [])` for `when (Name.Variant)`).
                 if let Some((enum_name, variant)) = name.split_once('.') {
                     if let Some(variant_list) = self.struct_field_indices.get(enum_name) {
-                        if let Some(&(_, tag)) = variant_list.iter().find(|(vname, _)| *vname == variant) {
+                        if let Some(&(_, tag)) =
+                            variant_list.iter().find(|(vname, _)| *vname == variant)
+                        {
                             self.emit_op(MvmOp::PushI64);
                             self.emit_i64(tag as i64);
                             for arg in args {
@@ -804,7 +870,10 @@ impl MvmCodegen {
                     // Desugared method-call enum constructor: `Circle(Shape, 5)`
                     // (from `Shape.Circle(5)`) -> EnumNew(5, tag_of_Circle_in_Shape)
                     if let Some(variant_list) = self.struct_field_indices.get(&enum_name) {
-                        if let Some(&(_, tag)) = variant_list.iter().find(|(vname, _)| *vname == name.as_str()) {
+                        if let Some(&(_, tag)) = variant_list
+                            .iter()
+                            .find(|(vname, _)| *vname == name.as_str())
+                        {
                             // EnumNew expects: [tag, payload_0, ..., payload_{n-1}] on the
                             // stack (tag pushed first/bottom, payloads on top).
                             self.emit_op(MvmOp::PushI64);
@@ -845,7 +914,9 @@ impl MvmCodegen {
                     self.emit_op(MvmOp::CallHost);
                     self.emit_u32(name_idx);
                     self.emit_u8(args.len() as u8);
-                } else if let Some(&func_idx) = self.func_indices.get(name)
+                } else if let Some(&func_idx) = self
+                    .func_indices
+                    .get(name)
                     .or_else(|| {
                         if name.starts_with("std.") {
                             self.func_indices.get(&format!("mvp_{}", name))
@@ -866,8 +937,9 @@ impl MvmCodegen {
                         // then load the closure value, then invoke CallClosure.
                         // The VM reads the thunk index and capture count from the
                         // closure value itself.
-                        let closure_idx = self.resolve_local(lookup_name)
-                            .unwrap_or_else(|| panic!("Closure variable '{}' not found in scope", lookup_name));
+                        let closure_idx = self.resolve_local(lookup_name).unwrap_or_else(|| {
+                            panic!("Closure variable '{}' not found in scope", lookup_name)
+                        });
                         for arg in args {
                             self.compile_expr(arg);
                         }
@@ -891,7 +963,9 @@ impl MvmCodegen {
                     self.emit_op(MvmOp::PushUnit);
                 }
             }
-            Expr::ECast { expr: inner, to, .. } => {
+            Expr::ECast {
+                expr: inner, to, ..
+            } => {
                 self.compile_expr(inner);
                 self.emit_cast(to);
             }
@@ -965,7 +1039,9 @@ impl MvmCodegen {
                 self.emit_op(MvmOp::Drop);
                 self.emit_jmp(loop_label);
             }
-            Expr::EFor { var, range, body, .. } => {
+            Expr::EFor {
+                var, range, body, ..
+            } => {
                 if !matches!(range.as_ref(), Expr::ECall { name, .. } if name == "range") {
                     self.compile_for_over_array(var, range, body);
                     return;
@@ -993,11 +1069,11 @@ impl MvmCodegen {
                 // range(n) creates Range(0, n, 0) — the value 3 produces end=3
                 // But we can't extract the end field from the range easily.
                 // Alternative: call range(0, end) and iterate manually.
-                // 
+                //
                 // Actually, simplest approach: iterate using counter
                 // The range expression on the stack is a Value::Range
                 // We just need to loop n times where n is the only arg
-                // 
+                //
                 // For now, compile the range expression but use a manual counter
                 // Drop the range (we don't need it anymore)
                 self.emit_op(MvmOp::Drop);
@@ -1006,14 +1082,17 @@ impl MvmCodegen {
                 // on the stack before the range builtin consumed it)
                 // BUT: The range builtin consumed the arg! We need to compile
                 // the range expression AGAIN to get the arg value.
-                // 
+                //
                 // Better approach: use the arg of range() directly
                 // Recompile the range expression's arg
                 match range.as_ref() {
                     Expr::ECall { args, .. } if !args.is_empty() => {
                         self.compile_expr(&args[0]);
                     }
-                    _ => { self.emit_op(MvmOp::PushI64); self.emit_i64(0); }
+                    _ => {
+                        self.emit_op(MvmOp::PushI64);
+                        self.emit_i64(0);
+                    }
                 }
                 // Stack: [end_value]
                 self.emit_op(MvmOp::StoreLocal);
@@ -1067,7 +1146,12 @@ impl MvmCodegen {
                 self.define_label(end_label);
                 self.emit_op(MvmOp::PushUnit);
             }
-            Expr::EChoose { var, cases, otherwise, .. } => {
+            Expr::EChoose {
+                var,
+                cases,
+                otherwise,
+                ..
+            } => {
                 let end_label = self.new_label();
                 let case_labels: Vec<u32> = (0..cases.len()).map(|_| self.new_label()).collect();
 
@@ -1079,9 +1163,7 @@ impl MvmCodegen {
                     // Dup the var value for comparison
                     self.emit_op(MvmOp::Dup);
                     if let Expr::EEnumPattern {
-                        enum_name,
-                        variant,
-                        ..
+                        enum_name, variant, ..
                     } = case.when.as_ref()
                     {
                         // Emit a tag-only enum value for the variant discriminant.
@@ -1119,7 +1201,7 @@ impl MvmCodegen {
                         self.compile_expr(&case.then);
                     } else {
                         self.emit_op(MvmOp::Drop); // drop the dup'd var
-                        // Destructure payload fields into binding locals.
+                                                   // Destructure payload fields into binding locals.
                         if let Expr::EEnumPattern { bindings, .. } = case.when.as_ref() {
                             for (bi, b) in bindings.iter().enumerate() {
                                 self.compile_expr(&var_clone);
@@ -1144,11 +1226,21 @@ impl MvmCodegen {
                 self.define_label(end_label);
             }
             Expr::EMacro { .. } => {} // Already expanded
-            Expr::EMacroVar { .. } => { self.emit_op(MvmOp::PushUnit); }
-            Expr::EMethodCall { expr, method, args, .. } => {
-                if let Expr::EVar { name: enum_name, .. } = expr.as_ref() {
+            Expr::EMacroVar { .. } => {
+                self.emit_op(MvmOp::PushUnit);
+            }
+            Expr::EMethodCall {
+                expr, method, args, ..
+            } => {
+                if let Expr::EVar {
+                    name: enum_name, ..
+                } = expr.as_ref()
+                {
                     if let Some(variant_list) = self.struct_field_indices.get(enum_name) {
-                        if let Some(&(_, tag)) = variant_list.iter().find(|(vname, _)| vname.as_str() == method.as_str()) {
+                        if let Some(&(_, tag)) = variant_list
+                            .iter()
+                            .find(|(vname, _)| vname.as_str() == method.as_str())
+                        {
                             self.emit_op(MvmOp::PushI64);
                             self.emit_i64(tag as i64);
                             for arg in args {
@@ -1160,12 +1252,20 @@ impl MvmCodegen {
                         }
                     }
                 }
-                unreachable!("EMethodCall should be desugared by frontend or be an enum constructor");
+                unreachable!(
+                    "EMethodCall should be desugared by frontend or be an enum constructor"
+                );
             }
             Expr::EEnumPattern { .. } => {
                 unreachable!("EEnumPattern is handled inline in the EChoose arm")
             }
-            Expr::ELambda { params, ret, captures, body, .. } => {
+            Expr::ELambda {
+                params,
+                ret,
+                captures,
+                body,
+                ..
+            } => {
                 // Lower a lambda to a closure value. Register a fresh thunk
                 // function in the function table (compiled after the enclosing
                 // function body), capture the listed variables by value, then
@@ -1283,18 +1383,28 @@ impl MvmCodegen {
                 let idx = self.declare_local(name);
                 // An untyped binding of a lambda is a closure-typed variable.
                 if let Expr::ELambda { params, ret, .. } = &**expr {
-                    self.var_types.insert(name.clone(), Typ::TFunc {
-                        params: params.iter().map(|p| match p {
-                            Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ.clone(),
-                        }).collect(),
-                        returns: Box::new(ret.clone()),
-                    });
+                    self.var_types.insert(
+                        name.clone(),
+                        Typ::TFunc {
+                            params: params
+                                .iter()
+                                .map(|p| match p {
+                                    Param::PRef { typ, .. } | Param::POwn { typ, .. } => {
+                                        typ.clone()
+                                    }
+                                })
+                                .collect(),
+                            returns: Box::new(ret.clone()),
+                        },
+                    );
                 }
                 self.compile_expr(expr);
                 self.emit_op(MvmOp::StoreLocal);
                 self.emit_u32(idx);
             }
-            Stmt::SLetTyped { name, typ, expr, .. } => {
+            Stmt::SLetTyped {
+                name, typ, expr, ..
+            } => {
                 let idx = self.declare_local(name);
                 self.var_types.insert(name.clone(), typ.clone());
                 self.compile_expr(expr);
@@ -1312,7 +1422,12 @@ impl MvmCodegen {
                     self.emit_op(MvmOp::Drop);
                 }
             }
-            Stmt::SFieldAssign { target, field, expr, .. } => {
+            Stmt::SFieldAssign {
+                target,
+                field,
+                expr,
+                ..
+            } => {
                 // `target.field = expr` — MVM backend field write.
                 // Compile the target struct, the new value, emit StructSet
                 // with the field index, then store the modified struct back
@@ -1320,7 +1435,9 @@ impl MvmCodegen {
                 if let Expr::EVar { name, .. } | Expr::EMove { name, .. } = target.as_ref() {
                     if let Some(local_idx) = self.resolve_local(name) {
                         if let Some(field_list) = self.find_field_list(target) {
-                            if let Some(idx) = field_list.iter().position(|(fname, _)| fname == field) {
+                            if let Some(idx) =
+                                field_list.iter().position(|(fname, _)| fname == field)
+                            {
                                 self.compile_expr(target);
                                 self.compile_expr(expr);
                                 self.emit_op(MvmOp::StructSet);
@@ -1367,7 +1484,9 @@ impl MvmCodegen {
                 if let Expr::ECall { name, args, .. } = expr.as_ref() {
                     // Try full qualified name first, fall back to bare name.
                     let lookup_name = name.rsplit('.').next().unwrap_or(name);
-                    let ref_names = self.void_ref_params.get(name)
+                    let ref_names = self
+                        .void_ref_params
+                        .get(name)
                         .or_else(|| {
                             if name.starts_with("std.") {
                                 self.void_ref_params.get(&format!("mvp_{}", name))
@@ -1380,7 +1499,9 @@ impl MvmCodegen {
                         if let Some(first_ref) = ref_names.first() {
                             if let Some(pos) = ref_names.iter().position(|n| n == first_ref) {
                                 if pos < args.len() {
-                                    if let Expr::EVar { name, .. } | Expr::EMove { name, .. } = &args[pos] {
+                                    if let Expr::EVar { name, .. } | Expr::EMove { name, .. } =
+                                        &args[pos]
+                                    {
                                         if let Some(idx) = self.resolve_local(name) {
                                             self.compile_expr(expr);
                                             self.emit_op(MvmOp::StoreLocal);

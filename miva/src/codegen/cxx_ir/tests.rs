@@ -114,7 +114,10 @@ fn ir_def(d: &Def) -> String {
 }
 
 fn var(name: &str) -> Expr {
-    Expr::EVar { loc: loc(), name: name.into() }
+    Expr::EVar {
+        loc: loc(),
+        name: name.into(),
+    }
 }
 
 fn int(value: i64) -> Expr {
@@ -128,7 +131,10 @@ fn test_expr_string_unicode_bytes() {
     let value = "\u{2550}";
     assert_eq!(value.as_bytes(), &[0xe2, 0x95, 0x90]);
 
-    let result = ir_expr(&Expr::EString { loc: loc(), value: value.to_string() });
+    let result = ir_expr(&Expr::EString {
+        loc: loc(),
+        value: value.to_string(),
+    });
     let prefix = "mvp_builtin_string(\"";
     let suffix = "\")";
     assert!(result.starts_with(prefix));
@@ -201,37 +207,55 @@ fn test_expr_neg_int() {
 
 #[test]
 fn test_expr_bool_true() {
-    let e = Expr::EBool { loc: loc(), value: true };
+    let e = Expr::EBool {
+        loc: loc(),
+        value: true,
+    };
     assert_eq!(ir_expr(&e), "mvp_builtin_boolean(true)");
 }
 
 #[test]
 fn test_expr_bool_false() {
-    let e = Expr::EBool { loc: loc(), value: false };
+    let e = Expr::EBool {
+        loc: loc(),
+        value: false,
+    };
     assert_eq!(ir_expr(&e), "mvp_builtin_boolean(false)");
 }
 
 #[test]
 fn test_expr_float() {
-    let e = Expr::EFloat { loc: loc(), value: 3.14 };
+    let e = Expr::EFloat {
+        loc: loc(),
+        value: 3.14,
+    };
     assert_eq!(ir_expr(&e), "mvp_builtin_float(3.14)");
 }
 
 #[test]
 fn test_expr_float_zero() {
-    let e = Expr::EFloat { loc: loc(), value: 0.0 };
+    let e = Expr::EFloat {
+        loc: loc(),
+        value: 0.0,
+    };
     assert_eq!(ir_expr(&e), "mvp_builtin_float(0)");
 }
 
 #[test]
 fn test_expr_char() {
-    let e = Expr::EChar { loc: loc(), value: "a".into() };
+    let e = Expr::EChar {
+        loc: loc(),
+        value: "a".into(),
+    };
     assert_eq!(ir_expr(&e), "mvp_builtin_byte('a')");
 }
 
 #[test]
 fn test_expr_string() {
-    let e = Expr::EString { loc: loc(), value: "hello".into() };
+    let e = Expr::EString {
+        loc: loc(),
+        value: "hello".into(),
+    };
     assert_eq!(ir_expr(&e), "mvp_builtin_string(\"hello\")");
 }
 
@@ -242,13 +266,19 @@ fn test_expr_var() {
 
 #[test]
 fn test_expr_move() {
-    let e = Expr::EMove { loc: loc(), name: "x".into() };
+    let e = Expr::EMove {
+        loc: loc(),
+        name: "x".into(),
+    };
     assert_eq!(ir_expr(&e), "std::move(x)");
 }
 
 #[test]
 fn test_expr_clone() {
-    let e = Expr::EClone { loc: loc(), name: "x".into() };
+    let e = Expr::EClone {
+        loc: loc(),
+        name: "x".into(),
+    };
     assert_eq!(ir_expr(&e), "decltype(x)(x)");
 }
 
@@ -259,19 +289,29 @@ fn test_expr_void() {
 
 #[test]
 fn test_expr_addr() {
-    let e = Expr::EAddr { loc: loc(), expr: Box::new(var("x")) };
+    let e = Expr::EAddr {
+        loc: loc(),
+        expr: Box::new(var("x")),
+    };
     assert_eq!(ir_expr(&e), "&(x)");
 }
 
 #[test]
 fn test_expr_deref() {
-    let e = Expr::EDeref { loc: loc(), expr: Box::new(var("p")) };
+    let e = Expr::EDeref {
+        loc: loc(),
+        expr: Box::new(var("p")),
+    };
     assert_eq!(ir_expr(&e), "*(p)");
 }
 
 #[test]
 fn test_expr_macro_empty() {
-    let e = Expr::EMacro { loc: loc(), name: "something".into(), args: vec![] };
+    let e = Expr::EMacro {
+        loc: loc(),
+        name: "something".into(),
+        args: vec![],
+    };
     assert_eq!(ir_expr(&e), "");
 }
 
@@ -348,7 +388,12 @@ fn test_binop_constant_folding() {
 // ===== call =====
 
 fn call(name: &str, type_args: Vec<Typ>, args: Vec<Expr>) -> Expr {
-    Expr::ECall { loc: loc(), name: name.into(), type_args, args }
+    Expr::ECall {
+        loc: loc(),
+        name: name.into(),
+        type_args,
+        args,
+    }
 }
 
 #[test]
@@ -364,7 +409,14 @@ fn test_call_with_args() {
 
 #[test]
 fn test_call_builtin_print() {
-    let e = call("print", vec![], vec![Expr::EString { loc: loc(), value: "hello".into() }]);
+    let e = call(
+        "print",
+        vec![],
+        vec![Expr::EString {
+            loc: loc(),
+            value: "hello".into(),
+        }],
+    );
     assert_eq!(ir_expr(&e), "mvp_print(mvp_builtin_string(\"hello\"))");
 }
 
@@ -379,7 +431,11 @@ fn test_if_no_else() {
         else_: None,
     };
     let result = ir_expr(&e);
-    assert!(result.starts_with("([&]() -> void { if ("), "got: {}", result);
+    assert!(
+        result.starts_with("([&]() -> void { if ("),
+        "got: {}",
+        result
+    );
     assert!(result.contains("c"));
     assert!(result.contains("1"));
 }
@@ -399,7 +455,10 @@ fn test_if_with_else() {
 fn test_if_constant_cond_folds_to_then() {
     let e = Expr::EIf {
         loc: loc(),
-        cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+        cond: Box::new(Expr::EBool {
+            loc: loc(),
+            value: true,
+        }),
         then: Box::new(int(1)),
         else_: Some(Box::new(int(2))),
     };
@@ -425,7 +484,11 @@ fn test_choose_with_guard() {
     };
     let result = ir_expr(&e);
     assert!(result.contains("&&"), "expected guard && in: {}", result);
-    assert!(result.contains("x >"), "expected guard comparison in: {}", result);
+    assert!(
+        result.contains("x >"),
+        "expected guard comparison in: {}",
+        result
+    );
 }
 
 // ===== loops in value position =====
@@ -434,7 +497,10 @@ fn test_choose_with_guard() {
 fn test_while_basic() {
     let e = Expr::EWhile {
         loc: loc(),
-        cond: Box::new(Expr::EBool { loc: loc(), value: true }),
+        cond: Box::new(Expr::EBool {
+            loc: loc(),
+            value: true,
+        }),
         body: Box::new(Expr::EVoid { loc: loc() }),
     };
     assert!(ir_expr(&e).starts_with("([&]() { while ("));
@@ -464,13 +530,19 @@ fn test_for_basic() {
 
 #[test]
 fn test_array_lit_empty() {
-    let e = Expr::EArrayLit { loc: loc(), values: vec![] };
+    let e = Expr::EArrayLit {
+        loc: loc(),
+        values: vec![],
+    };
     assert_eq!(ir_expr(&e), "std::vector{}");
 }
 
 #[test]
 fn test_array_lit_values() {
-    let e = Expr::EArrayLit { loc: loc(), values: vec![int(1), int(2)] };
+    let e = Expr::EArrayLit {
+        loc: loc(),
+        values: vec![int(1), int(2)],
+    };
     assert_eq!(
         ir_expr(&e),
         "std::vector{static_cast<mvp_builtin_int>(1), static_cast<mvp_builtin_int>(2)}"
@@ -487,7 +559,10 @@ fn test_stmt_let_mutable() {
         name: "x".into(),
         expr: Box::new(int(5)),
     };
-    assert_eq!(ir_stmt(&stmt), "auto x = static_cast<mvp_builtin_int>(5);\n");
+    assert_eq!(
+        ir_stmt(&stmt),
+        "auto x = static_cast<mvp_builtin_int>(5);\n"
+    );
 }
 
 #[test]
@@ -498,12 +573,18 @@ fn test_stmt_let_immutable() {
         name: "x".into(),
         expr: Box::new(int(5)),
     };
-    assert_eq!(ir_stmt(&stmt), "const auto x = static_cast<mvp_builtin_int>(5);\n");
+    assert_eq!(
+        ir_stmt(&stmt),
+        "const auto x = static_cast<mvp_builtin_int>(5);\n"
+    );
 }
 
 #[test]
 fn test_stmt_return() {
-    let stmt = Stmt::SReturn { loc: loc(), expr: Box::new(int(0)) };
+    let stmt = Stmt::SReturn {
+        loc: loc(),
+        expr: Box::new(int(0)),
+    };
     assert_eq!(ir_stmt(&stmt), "return static_cast<mvp_builtin_int>(0);\n");
 }
 
@@ -511,7 +592,14 @@ fn test_stmt_return() {
 fn test_stmt_expr() {
     let stmt = Stmt::SExpr {
         loc: loc(),
-        expr: Box::new(call("print", vec![], vec![Expr::EString { loc: loc(), value: "hi".into() }])),
+        expr: Box::new(call(
+            "print",
+            vec![],
+            vec![Expr::EString {
+                loc: loc(),
+                value: "hi".into(),
+            }],
+        )),
     };
     assert_eq!(ir_stmt(&stmt), "mvp_print(mvp_builtin_string(\"hi\"));\n");
 }
@@ -534,7 +622,10 @@ fn test_stmt_let_typed() {
         typ: Typ::TInt,
         expr: Box::new(int(5)),
     };
-    assert_eq!(ir_stmt(&stmt), "mvp_builtin_int x = static_cast<mvp_builtin_int>(5);\n");
+    assert_eq!(
+        ir_stmt(&stmt),
+        "mvp_builtin_int x = static_cast<mvp_builtin_int>(5);\n"
+    );
 }
 
 // ===== enum defs =====
@@ -545,15 +636,29 @@ fn test_enum_def() {
         loc: loc(),
         name: "Color".into(),
         variants: vec![
-            EnumVariant { name: "Red".into(), payload: vec![] },
-            EnumVariant { name: "Green".into(), payload: vec![Typ::TInt] },
+            EnumVariant {
+                name: "Red".into(),
+                payload: vec![],
+            },
+            EnumVariant {
+                name: "Green".into(),
+                payload: vec![Typ::TInt],
+            },
         ],
         type_params: vec![],
     };
     let out = ir_def(&def);
-    assert!(out.contains("struct Color"), "expected struct Color in:\n{}", out);
+    assert!(
+        out.contains("struct Color"),
+        "expected struct Color in:\n{}",
+        out
+    );
     assert!(out.contains("__tag"), "expected __tag in:\n{}", out);
-    assert!(out.contains("Color_Green("), "expected Color_Green ctor in:\n{}", out);
+    assert!(
+        out.contains("Color_Green("),
+        "expected Color_Green ctor in:\n{}",
+        out
+    );
 }
 
 #[test]
@@ -562,16 +667,38 @@ fn test_generic_enum_def() {
         loc: loc(),
         name: "Box".into(),
         variants: vec![
-            EnumVariant { name: "Value".into(), payload: vec![Typ::TGenericParam { name: "T".into() }] },
-            EnumVariant { name: "Empty".into(), payload: vec![] },
+            EnumVariant {
+                name: "Value".into(),
+                payload: vec![Typ::TGenericParam { name: "T".into() }],
+            },
+            EnumVariant {
+                name: "Empty".into(),
+                payload: vec![],
+            },
         ],
         type_params: vec!["T".into()],
     };
     let out = ir_def(&def);
-    assert!(out.contains("template<typename T>"), "expected template header in:\n{}", out);
-    assert!(out.contains("struct Box"), "expected struct Box in:\n{}", out);
-    assert!(out.contains("inline Box<T> Box_Value(T __a0)"), "expected generic ctor in:\n{}", out);
-    assert!(out.contains("Box_Value_tag()"), "expected tag accessor in:\n{}", out);
+    assert!(
+        out.contains("template<typename T>"),
+        "expected template header in:\n{}",
+        out
+    );
+    assert!(
+        out.contains("struct Box"),
+        "expected struct Box in:\n{}",
+        out
+    );
+    assert!(
+        out.contains("inline Box<T> Box_Value(T __a0)"),
+        "expected generic ctor in:\n{}",
+        out
+    );
+    assert!(
+        out.contains("Box_Value_tag()"),
+        "expected tag accessor in:\n{}",
+        out
+    );
 }
 
 #[test]

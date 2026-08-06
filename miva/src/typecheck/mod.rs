@@ -34,14 +34,28 @@ fn types_equal(a: &Typ, b: &Typ) -> bool {
     // checking treat the two shapes — produced by different code paths
     // (let-annotation parsing keeps TStruct; func_sigs normalize to
     // TGenericParam) — as interchangeable without chasing every producer.
-    if let (Typ::TStruct { name: n1, fields: f1, type_args: ta1 },
-            Typ::TGenericParam { name: n2 }) = (a, b) {
+    if let (
+        Typ::TStruct {
+            name: n1,
+            fields: f1,
+            type_args: ta1,
+        },
+        Typ::TGenericParam { name: n2 },
+    ) = (a, b)
+    {
         if n1 == n2 && f1.is_empty() && ta1.is_empty() {
             return true;
         }
     }
-    if let (Typ::TGenericParam { name: n1 },
-            Typ::TStruct { name: n2, fields: f2, type_args: ta2 }) = (a, b) {
+    if let (
+        Typ::TGenericParam { name: n1 },
+        Typ::TStruct {
+            name: n2,
+            fields: f2,
+            type_args: ta2,
+        },
+    ) = (a, b)
+    {
         if n1 == n2 && f2.is_empty() && ta2.is_empty() {
             return true;
         }
@@ -115,9 +129,7 @@ fn build_struct_map(
     (structs, struct_type_params)
 }
 
-fn build_shape_map(
-    defs: &[Def],
-) -> (HashMap<String, Vec<FieldDef>>, HashMap<String, Vec<String>>) {
+fn build_shape_map(defs: &[Def]) -> (HashMap<String, Vec<FieldDef>>, HashMap<String, Vec<String>>) {
     let mut shapes = HashMap::new();
     let mut shape_type_params = HashMap::new();
     for def in defs {
@@ -187,7 +199,8 @@ fn require_type(
         struct_type_params,
         enums,
         enum_type_params,
-        func_return, droppable,
+        func_return,
+        droppable,
         e,
     );
     if matches!(typ, Typ::TNull | Typ::TInvalid) {
@@ -236,7 +249,6 @@ fn loc_of(e: &Expr) -> Loc {
     }
 }
 
-
 // Drop functions registered via `op_drop` are sealed: only the compiler's
 // desugaring pass may invoke them, so any user-written call or value use is
 // rejected (E0034).
@@ -272,7 +284,10 @@ pub fn check_program_with(
     }
     let (structs, struct_type_params) = build_struct_map(defs);
     let (shapes, shape_type_params) = build_shape_map(defs);
-    let (enums, enum_type_params) = build_enum_maps(defs);
+    let (mut enums, mut enum_type_params) = build_enum_maps(defs);
+    for (k, v) in global_enums {
+        enums.entry(k.clone()).or_insert_with(|| v.clone());
+    }
     let droppable = crate::droppable::compute_droppable(defs);
     let has_imports = defs.iter().any(|d| {
         matches!(d, Def::SImport { .. })
@@ -518,4 +533,3 @@ pub fn check_program_with(
 
     errs
 }
-

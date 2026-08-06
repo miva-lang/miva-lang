@@ -3,8 +3,8 @@ pub mod cxx_ir;
 mod llvm;
 pub mod mvm;
 
-use std::collections::HashMap;
 use crate::ast::{Def, Typ};
+use std::collections::HashMap;
 
 /// Supported code generation backends.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,7 +74,14 @@ pub fn collect_func_sigs(defs: &[Def]) -> HashMap<String, FuncSig> {
     let mut sigs = HashMap::new();
     for def in defs {
         match def {
-            Def::DFunc { name, type_params, returns, is_async, type_bounds, .. } => {
+            Def::DFunc {
+                name,
+                type_params,
+                returns,
+                is_async,
+                type_bounds,
+                ..
+            } => {
                 sigs.entry(name.clone()).or_insert(FuncSig {
                     type_params: type_params.clone(),
                     returns: returns.clone(),
@@ -115,7 +122,10 @@ pub fn resolve_c_escapes(s: &str) -> String {
                     for _ in 0..2 {
                         match chars.next() {
                             Some(c) if c.is_ascii_hexdigit() => hex.push(c),
-                            Some(c) => { hex.push(c); break; },
+                            Some(c) => {
+                                hex.push(c);
+                                break;
+                            }
                             None => break,
                         }
                     }
@@ -146,7 +156,11 @@ pub fn build_ir(defs: &[Def]) -> [String; 3] {
 }
 
 /// Generate code from the AST using the specified backend.
-pub fn build_ir_with_backend(defs: &[Def], backend: Backend, func_sigs: &HashMap<String, FuncSig>) -> GeneratedOutput {
+pub fn build_ir_with_backend(
+    defs: &[Def],
+    backend: Backend,
+    func_sigs: &HashMap<String, FuncSig>,
+) -> GeneratedOutput {
     match backend {
         Backend::Cxx => {
             let [program, header, test] = cxx_ir::build_ir(defs);

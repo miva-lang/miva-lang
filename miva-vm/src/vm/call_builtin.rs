@@ -6,43 +6,138 @@ impl Mvm {
         // Collect args from stack based on builtin
         match idx {
             // print, prints, println, printlns
-            0 => { let v = self.pop()?; print!("{}", v.display()); self.push(Value::Unit)?; } // print
-            1 => { let v = self.pop()?; match v { Value::String(s) => print!("{}", s), _ => print!("{}", v.display()) }; self.push(Value::Unit)?; } // prints
-            2 => { let v = self.pop()?; println!("{}", v.display()); self.push(Value::Unit)?; } // println
-            3 => { let v = self.pop()?; match v { Value::String(s) => println!("{}", s), _ => println!("{}", v.display()) }; self.push(Value::Unit)?; } // printlns
+            0 => {
+                let v = self.pop()?;
+                print!("{}", v.display());
+                self.push(Value::Unit)?;
+            } // print
+            1 => {
+                let v = self.pop()?;
+                match v {
+                    Value::String(s) => print!("{}", s),
+                    _ => print!("{}", v.display()),
+                };
+                self.push(Value::Unit)?;
+            } // prints
+            2 => {
+                let v = self.pop()?;
+                println!("{}", v.display());
+                self.push(Value::Unit)?;
+            } // println
+            3 => {
+                let v = self.pop()?;
+                match v {
+                    Value::String(s) => println!("{}", s),
+                    _ => println!("{}", v.display()),
+                };
+                self.push(Value::Unit)?;
+            } // printlns
             // error, errors, errorln, errorlns
-            4 => { let v = self.pop()?; eprint!("{}", v.display()); self.push(Value::Unit)?; }
-            5 => { let v = self.pop()?; match v { Value::String(s) => eprint!("{}", s), _ => eprint!("{}", v.display()) }; self.push(Value::Unit)?; }
-            6 => { let v = self.pop()?; eprintln!("{}", v.display()); self.push(Value::Unit)?; }
-            7 => { let v = self.pop()?; match v { Value::String(s) => eprintln!("{}", s), _ => eprintln!("{}", v.display()) }; self.push(Value::Unit)?; }
+            4 => {
+                let v = self.pop()?;
+                eprint!("{}", v.display());
+                self.push(Value::Unit)?;
+            }
+            5 => {
+                let v = self.pop()?;
+                match v {
+                    Value::String(s) => eprint!("{}", s),
+                    _ => eprint!("{}", v.display()),
+                };
+                self.push(Value::Unit)?;
+            }
+            6 => {
+                let v = self.pop()?;
+                eprintln!("{}", v.display());
+                self.push(Value::Unit)?;
+            }
+            7 => {
+                let v = self.pop()?;
+                match v {
+                    Value::String(s) => eprintln!("{}", s),
+                    _ => eprintln!("{}", v.display()),
+                };
+                self.push(Value::Unit)?;
+            }
             // exit
-            8 => { self.exit_code = self.pop()?.as_i64().unwrap_or(0); self.halted = true; return Ok(()); }
+            8 => {
+                self.exit_code = self.pop()?.as_i64().unwrap_or(0);
+                self.halted = true;
+                return Ok(());
+            }
             // abort
-            9 => { eprintln!("MVM: abort called"); std::process::exit(1); }
+            9 => {
+                eprintln!("MVM: abort called");
+                std::process::exit(1);
+            }
             // panic
             10 => {
-                let msg = match self.pop()? { Value::String(s) => (*s).clone(), v => v.display() };
+                let msg = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => v.display(),
+                };
                 eprintln!("MVM panic: {}", msg);
                 std::process::exit(1);
             }
             // string_concat
             11 => {
-                let b = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("string_concat expected string, got {}", v.type_name()).into()) };
-                let a = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("string_concat expected string, got {}", v.type_name()).into()) };
+                let b = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("string_concat expected string, got {}", v.type_name()).into(),
+                        )
+                    }
+                };
+                let a = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("string_concat expected string, got {}", v.type_name()).into(),
+                        )
+                    }
+                };
                 self.push(Value::String(Arc::new(a + &b)))?;
             }
             // string_length
             12 => {
-                match self.pop()? { Value::String(s) => self.push(Value::Int(s.len() as i64))?, v => return Err(format!("string_length expected string, got {}", v.type_name()).into()) };
+                match self.pop()? {
+                    Value::String(s) => self.push(Value::Int(s.len() as i64))?,
+                    v => {
+                        return Err(
+                            format!("string_length expected string, got {}", v.type_name()).into(),
+                        )
+                    }
+                };
             }
             // string_parse
             13 => {
-                match self.pop()? { Value::String(s) => { let n = s.trim().parse().unwrap_or(0); self.push(Value::Int(n))?; } v => return Err(format!("string_parse expected string, got {}", v.type_name()).into()) };
+                match self.pop()? {
+                    Value::String(s) => {
+                        let n = s.trim().parse().unwrap_or(0);
+                        self.push(Value::Int(n))?;
+                    }
+                    v => {
+                        return Err(
+                            format!("string_parse expected string, got {}", v.type_name()).into(),
+                        )
+                    }
+                };
             }
             // string_make
             14 => {
                 let len = self.pop()?.as_i64().ok_or("string_make expected int")? as usize;
-                match self.pop()? { Value::Char(c) => { let s: String = std::iter::repeat(c as char).take(len).collect(); self.push(Value::String(Arc::new(s)))?; } v => return Err(format!("string_make expected char, got {}", v.type_name()).into()) };
+                match self.pop()? {
+                    Value::Char(c) => {
+                        let s: String = std::iter::repeat(c as char).take(len).collect();
+                        self.push(Value::String(Arc::new(s)))?;
+                    }
+                    v => {
+                        return Err(
+                            format!("string_make expected char, got {}", v.type_name()).into()
+                        )
+                    }
+                };
             }
             // string_from (to_string)
             15 => {
@@ -52,24 +147,54 @@ impl Mvm {
             // string_get
             16 => {
                 let idx = self.pop()?.as_i64().ok_or("string_get expected int")? as usize;
-                match self.pop()? { Value::String(s) => { let c = s.chars().nth(idx).unwrap_or('\0'); self.push(Value::Char(c as u8))?; } v => return Err(format!("string_get expected string, got {}", v.type_name()).into()) };
+                match self.pop()? {
+                    Value::String(s) => {
+                        let c = s.chars().nth(idx).unwrap_or('\0');
+                        self.push(Value::Char(c as u8))?;
+                    }
+                    v => {
+                        return Err(
+                            format!("string_get expected string, got {}", v.type_name()).into()
+                        )
+                    }
+                };
             }
             // box_new
-            17 => { let v = self.pop()?; self.push(Value::Boxed(Arc::new(Mutex::new(v))))?; }
+            17 => {
+                let v = self.pop()?;
+                self.push(Value::Boxed(Arc::new(Mutex::new(v))))?;
+            }
             // box_deref
-            18 => { match self.pop()? { Value::Boxed(b) => self.push(b.lock().unwrap().clone())?, v => return Err(format!("box_deref expected box, got {}", v.type_name()).into()) }; }
+            18 => {
+                match self.pop()? {
+                    Value::Boxed(b) => self.push(b.lock().unwrap().clone())?,
+                    v => {
+                        return Err(format!("box_deref expected box, got {}", v.type_name()).into())
+                    }
+                };
+            }
             // box_set
-            19 => { let val = self.pop()?; match self.pop()? { Value::Boxed(b) => { *b.lock().unwrap() = val; self.push(Value::Unit)?; } v => return Err(format!("box_set expected box, got {}", v.type_name()).into()) }; }
+            19 => {
+                let val = self.pop()?;
+                match self.pop()? {
+                    Value::Boxed(b) => {
+                        *b.lock().unwrap() = val;
+                        self.push(Value::Unit)?;
+                    }
+                    v => return Err(format!("box_set expected box, got {}", v.type_name()).into()),
+                };
+            }
             // range
             20 => {
                 let end = self.pop()?.as_i64().ok_or("range expected int end")?;
                 // Handle both range(n) and range(start, end)
                 // If there's another value on the stack, it's start
-                let start = if self.stack.len() > 0 && matches!(self.stack.last(), Some(Value::Int(_))) {
-                    self.pop()?.as_i64().ok_or_else(VmError::expected_int)?
-                } else {
-                    0i64
-                };
+                let start =
+                    if self.stack.len() > 0 && matches!(self.stack.last(), Some(Value::Int(_))) {
+                        self.pop()?.as_i64().ok_or_else(VmError::expected_int)?
+                    } else {
+                        0i64
+                    };
                 self.push(Value::Range(start, end, start))?;
             }
             // to_string (same as string_from)
@@ -88,13 +213,23 @@ impl Mvm {
             23 => {
                 let mut line = String::new();
                 io::stdin().lock().read_line(&mut line).ok();
-                if line.ends_with('\n') { line.pop(); }
+                if line.ends_with('\n') {
+                    line.pop();
+                }
                 self.push(Value::String(Arc::new(line)))?;
             }
             // json_parse
             24 => {
-                let s = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("json_parse expected string, got {}", v.type_name()).into()) };
-                let val = serde_json::from_str(&s).map_err(|e| format!("JSON parse error: {}", e))?;
+                let s = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("json_parse expected string, got {}", v.type_name()).into()
+                        )
+                    }
+                };
+                let val =
+                    serde_json::from_str(&s).map_err(|e| format!("JSON parse error: {}", e))?;
                 self.push(Value::Json(Box::new(val)))?;
             }
             // json_kind
@@ -168,7 +303,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Array(a) => {
                             if idx >= a.len() {
-                                return Err(format!("json_array_get: index {} out of bounds (len={})", idx, a.len()).into());
+                                return Err(format!(
+                                    "json_array_get: index {} out of bounds (len={})",
+                                    idx,
+                                    a.len()
+                                )
+                                .into());
                             }
                             self.push(Value::Json(Box::new(a[idx].clone())))?;
                         }
@@ -196,7 +336,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Object(o) => {
                             if idx >= o.len() {
-                                return Err(format!("json_object_key: index {} out of bounds (len={})", idx, o.len()).into());
+                                return Err(format!(
+                                    "json_object_key: index {} out of bounds (len={})",
+                                    idx,
+                                    o.len()
+                                )
+                                .into());
                             }
                             let key = o.keys().nth(idx).unwrap().clone();
                             self.push(Value::String(Arc::new(key)))?;
@@ -214,7 +359,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Object(o) => {
                             if idx >= o.len() {
-                                return Err(format!("json_object_get: index {} out of bounds (len={})", idx, o.len()).into());
+                                return Err(format!(
+                                    "json_object_get: index {} out of bounds (len={})",
+                                    idx,
+                                    o.len()
+                                )
+                                .into());
                             }
                             let val = o.values().nth(idx).unwrap().clone();
                             self.push(Value::Json(Box::new(val)))?;
@@ -226,7 +376,16 @@ impl Mvm {
             }
             // json_object_find
             34 => {
-                let key = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("json_object_find expected string key, got {}", v.type_name()).into()) };
+                let key = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(format!(
+                            "json_object_find expected string key, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
+                };
                 let v = self.pop()?;
                 match v {
                     Value::Json(j) => match j.as_ref() {
@@ -259,7 +418,14 @@ impl Mvm {
             }
             // xml_parse
             37 => {
-                let s = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("xml_parse expected string, got {}", v.type_name()).into()) };
+                let s = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("xml_parse expected string, got {}", v.type_name()).into()
+                        )
+                    }
+                };
                 match crate::xml::parse(&s) {
                     Ok(node) => self.push(Value::Xml(node))?,
                     Err(e) => return Err(format!("XML parse error: {}", e).into()),
@@ -269,7 +435,11 @@ impl Mvm {
             38 => {
                 let kind = match self.pop()? {
                     Value::Xml(n) => n.kind.as_u8() as i64,
-                    v => return Err(format!("xml_kind expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(
+                            format!("xml_kind expected xml value, got {}", v.type_name()).into(),
+                        )
+                    }
                 };
                 self.push(Value::Int(kind))?;
             }
@@ -277,10 +447,16 @@ impl Mvm {
             39 => {
                 let tag = match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind != crate::xml::XmlKind::Element { return Err("xml_tag: value is not an element".into()); }
+                        if n.kind != crate::xml::XmlKind::Element {
+                            return Err("xml_tag: value is not an element".into());
+                        }
                         n.tag.clone()
                     }
-                    v => return Err(format!("xml_tag expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(
+                            format!("xml_tag expected xml value, got {}", v.type_name()).into()
+                        )
+                    }
                 };
                 self.push(Value::String(Arc::new(tag)))?;
             }
@@ -288,9 +464,19 @@ impl Mvm {
             40 => {
                 let count = match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind != crate::xml::XmlKind::Element { 0 } else { n.attrs.len() as i64 }
+                        if n.kind != crate::xml::XmlKind::Element {
+                            0
+                        } else {
+                            n.attrs.len() as i64
+                        }
                     }
-                    v => return Err(format!("xml_attr_count expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_attr_count expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::Int(count))?;
             }
@@ -299,11 +485,26 @@ impl Mvm {
                 let idx = self.pop()?.as_i64().ok_or("xml_attr_name expected int")? as usize;
                 let name = match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind != crate::xml::XmlKind::Element { return Err("xml_attr_name: value is not an element".into()); }
-                        if idx >= n.attrs.len() { return Err(format!("xml_attr_name: index {} out of bounds (len={})", idx, n.attrs.len()).into()); }
+                        if n.kind != crate::xml::XmlKind::Element {
+                            return Err("xml_attr_name: value is not an element".into());
+                        }
+                        if idx >= n.attrs.len() {
+                            return Err(format!(
+                                "xml_attr_name: index {} out of bounds (len={})",
+                                idx,
+                                n.attrs.len()
+                            )
+                            .into());
+                        }
                         n.attrs[idx].0.clone()
                     }
-                    v => return Err(format!("xml_attr_name expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_attr_name expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(name)))?;
             }
@@ -312,23 +513,58 @@ impl Mvm {
                 let idx = self.pop()?.as_i64().ok_or("xml_attr_value expected int")? as usize;
                 let val = match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind != crate::xml::XmlKind::Element { return Err("xml_attr_value: value is not an element".into()); }
-                        if idx >= n.attrs.len() { return Err(format!("xml_attr_value: index {} out of bounds (len={})", idx, n.attrs.len()).into()); }
+                        if n.kind != crate::xml::XmlKind::Element {
+                            return Err("xml_attr_value: value is not an element".into());
+                        }
+                        if idx >= n.attrs.len() {
+                            return Err(format!(
+                                "xml_attr_value: index {} out of bounds (len={})",
+                                idx,
+                                n.attrs.len()
+                            )
+                            .into());
+                        }
                         n.attrs[idx].1.clone()
                     }
-                    v => return Err(format!("xml_attr_value expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_attr_value expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(val)))?;
             }
             // xml_attr_find
             43 => {
-                let name = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("xml_attr_find expected string, got {}", v.type_name()).into()) };
+                let name = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("xml_attr_find expected string, got {}", v.type_name()).into(),
+                        )
+                    }
+                };
                 let val = match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind != crate::xml::XmlKind::Element { String::new() }
-                        else { n.attrs.iter().find(|(k, _)| k == &name).map(|(_, v)| v.clone()).unwrap_or_default() }
+                        if n.kind != crate::xml::XmlKind::Element {
+                            String::new()
+                        } else {
+                            n.attrs
+                                .iter()
+                                .find(|(k, _)| k == &name)
+                                .map(|(_, v)| v.clone())
+                                .unwrap_or_default()
+                        }
                     }
-                    v => return Err(format!("xml_attr_find expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_attr_find expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(val)))?;
             }
@@ -336,9 +572,21 @@ impl Mvm {
             44 => {
                 let count = match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind == crate::xml::XmlKind::Element || n.kind == crate::xml::XmlKind::Document { n.children.len() as i64 } else { 0 }
+                        if n.kind == crate::xml::XmlKind::Element
+                            || n.kind == crate::xml::XmlKind::Document
+                        {
+                            n.children.len() as i64
+                        } else {
+                            0
+                        }
                     }
-                    v => return Err(format!("xml_child_count expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_child_count expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::Int(count))?;
             }
@@ -347,20 +595,39 @@ impl Mvm {
                 let idx = self.pop()?.as_i64().ok_or("xml_child_get expected int")? as usize;
                 match self.pop()? {
                     Value::Xml(n) => {
-                        if n.kind != crate::xml::XmlKind::Element && n.kind != crate::xml::XmlKind::Document {
+                        if n.kind != crate::xml::XmlKind::Element
+                            && n.kind != crate::xml::XmlKind::Document
+                        {
                             return Err("xml_child_get: value is not an element or document".into());
                         }
-                        if idx >= n.children.len() { return Err(format!("xml_child_get: index {} out of bounds (len={})", idx, n.children.len()).into()); }
+                        if idx >= n.children.len() {
+                            return Err(format!(
+                                "xml_child_get: index {} out of bounds (len={})",
+                                idx,
+                                n.children.len()
+                            )
+                            .into());
+                        }
                         self.push(Value::Xml(n.children[idx].clone()))?;
                     }
-                    v => return Err(format!("xml_child_get expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_child_get expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 }
             }
             // xml_text
             46 => {
                 let text = match self.pop()? {
                     Value::Xml(n) => n.text.clone(),
-                    v => return Err(format!("xml_text expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(
+                            format!("xml_text expected xml value, got {}", v.type_name()).into(),
+                        )
+                    }
                 };
                 self.push(Value::String(Arc::new(text)))?;
             }
@@ -368,7 +635,13 @@ impl Mvm {
             47 => {
                 let text = match self.pop()? {
                     Value::Xml(n) => n.text.clone(),
-                    v => return Err(format!("xml_comment expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_comment expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(text)))?;
             }
@@ -376,7 +649,11 @@ impl Mvm {
             48 => {
                 let text = match self.pop()? {
                     Value::Xml(n) => n.text.clone(),
-                    v => return Err(format!("xml_cdata expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(
+                            format!("xml_cdata expected xml value, got {}", v.type_name()).into(),
+                        )
+                    }
                 };
                 self.push(Value::String(Arc::new(text)))?;
             }
@@ -384,7 +661,13 @@ impl Mvm {
             49 => {
                 let t = match self.pop()? {
                     Value::Xml(n) => n.pi_target.clone(),
-                    v => return Err(format!("xml_pi_target expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_pi_target expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(t)))?;
             }
@@ -392,7 +675,13 @@ impl Mvm {
             50 => {
                 let d = match self.pop()? {
                     Value::Xml(n) => n.pi_data.clone(),
-                    v => return Err(format!("xml_pi_data expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_pi_data expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(d)))?;
             }
@@ -400,7 +689,13 @@ impl Mvm {
             51 => {
                 let s = match self.pop()? {
                     Value::Xml(n) => crate::xml::stringify(&n),
-                    v => return Err(format!("xml_stringify expected xml value, got {}", v.type_name()).into()),
+                    v => {
+                        return Err(format!(
+                            "xml_stringify expected xml value, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
                 };
                 self.push(Value::String(Arc::new(s)))?;
             }
@@ -412,7 +707,14 @@ impl Mvm {
             }
             // toml_parse
             53 => {
-                let s = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("toml_parse expected string, got {}", v.type_name()).into()) };
+                let s = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("toml_parse expected string, got {}", v.type_name()).into()
+                        )
+                    }
+                };
                 match crate::toml::parse(&s) {
                     Ok(val) => self.push(Value::Json(Box::new(val)))?,
                     Err(e) => return Err(e.into()),
@@ -488,7 +790,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Array(a) => {
                             if idx >= a.len() {
-                                return Err(format!("toml_array_get: index {} out of bounds (len={})", idx, a.len()).into());
+                                return Err(format!(
+                                    "toml_array_get: index {} out of bounds (len={})",
+                                    idx,
+                                    a.len()
+                                )
+                                .into());
                             }
                             self.push(Value::Json(Box::new(a[idx].clone())))?;
                         }
@@ -516,7 +823,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Object(o) => {
                             if idx >= o.len() {
-                                return Err(format!("toml_object_key: index {} out of bounds (len={})", idx, o.len()).into());
+                                return Err(format!(
+                                    "toml_object_key: index {} out of bounds (len={})",
+                                    idx,
+                                    o.len()
+                                )
+                                .into());
                             }
                             let key = o.keys().nth(idx).unwrap().clone();
                             self.push(Value::String(Arc::new(key)))?;
@@ -534,7 +846,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Object(o) => {
                             if idx >= o.len() {
-                                return Err(format!("toml_object_get: index {} out of bounds (len={})", idx, o.len()).into());
+                                return Err(format!(
+                                    "toml_object_get: index {} out of bounds (len={})",
+                                    idx,
+                                    o.len()
+                                )
+                                .into());
                             }
                             let val = o.values().nth(idx).unwrap().clone();
                             self.push(Value::Json(Box::new(val)))?;
@@ -546,7 +863,16 @@ impl Mvm {
             }
             // toml_object_find
             63 => {
-                let key = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("toml_object_find expected string key, got {}", v.type_name()).into()) };
+                let key = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(format!(
+                            "toml_object_find expected string key, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
+                };
                 let v = self.pop()?;
                 match v {
                     Value::Json(j) => match j.as_ref() {
@@ -579,7 +905,14 @@ impl Mvm {
             }
             // yaml_parse
             66 => {
-                let s = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("yaml_parse expected string, got {}", v.type_name()).into()) };
+                let s = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(
+                            format!("yaml_parse expected string, got {}", v.type_name()).into()
+                        )
+                    }
+                };
                 match crate::yaml::parse(&s) {
                     Ok(val) => self.push(Value::Json(Box::new(val)))?,
                     Err(e) => return Err(e.into()),
@@ -656,7 +989,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Array(a) => {
                             if idx >= a.len() {
-                                return Err(format!("yaml_array_get: index {} out of bounds (len={})", idx, a.len()).into());
+                                return Err(format!(
+                                    "yaml_array_get: index {} out of bounds (len={})",
+                                    idx,
+                                    a.len()
+                                )
+                                .into());
                             }
                             self.push(Value::Json(Box::new(a[idx].clone())))?;
                         }
@@ -684,7 +1022,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Object(o) => {
                             if idx >= o.len() {
-                                return Err(format!("yaml_object_key: index {} out of bounds (len={})", idx, o.len()).into());
+                                return Err(format!(
+                                    "yaml_object_key: index {} out of bounds (len={})",
+                                    idx,
+                                    o.len()
+                                )
+                                .into());
                             }
                             let key = o.keys().nth(idx).unwrap().clone();
                             self.push(Value::String(Arc::new(key)))?;
@@ -702,7 +1045,12 @@ impl Mvm {
                     Value::Json(j) => match j.as_ref() {
                         JsonValue::Object(o) => {
                             if idx >= o.len() {
-                                return Err(format!("yaml_object_get: index {} out of bounds (len={})", idx, o.len()).into());
+                                return Err(format!(
+                                    "yaml_object_get: index {} out of bounds (len={})",
+                                    idx,
+                                    o.len()
+                                )
+                                .into());
                             }
                             let val = o.values().nth(idx).unwrap().clone();
                             self.push(Value::Json(Box::new(val)))?;
@@ -714,7 +1062,16 @@ impl Mvm {
             }
             // yaml_object_find
             76 => {
-                let key = match self.pop()? { Value::String(s) => (*s).clone(), v => return Err(format!("yaml_object_find expected string key, got {}", v.type_name()).into()) };
+                let key = match self.pop()? {
+                    Value::String(s) => (*s).clone(),
+                    v => {
+                        return Err(format!(
+                            "yaml_object_find expected string key, got {}",
+                            v.type_name()
+                        )
+                        .into())
+                    }
+                };
                 let v = self.pop()?;
                 match v {
                     Value::Json(j) => match j.as_ref() {
@@ -767,12 +1124,15 @@ impl Mvm {
                 let n = bytes / 8 + (if bytes % 8 > 0 { 1 } else { 0 });
                 let old_size = if p < self.memory.len() {
                     self.memory.len() - p
-                } else { 0 };
+                } else {
+                    0
+                };
                 let base = self.memory.len();
                 self.memory.resize(base + n, Value::Int(0));
                 let copy_len = old_size.min(n);
                 for i in 0..copy_len {
-                    self.memory[base + i] = std::mem::replace(&mut self.memory[p + i], Value::Int(0));
+                    self.memory[base + i] =
+                        std::mem::replace(&mut self.memory[p + i], Value::Int(0));
                 }
                 self.push(Value::Int(base as i64))?;
             }
@@ -814,14 +1174,31 @@ impl Mvm {
             }
             // mutex_lock -> pop handle, block until lock acquired, store guard ptr
             86 => {
-                let handle = self.pop()?.as_i64().ok_or("mutex_lock expected int handle")?;
+                let handle = self
+                    .pop()?
+                    .as_i64()
+                    .ok_or("mutex_lock expected int handle")?;
                 match self.mutex_table.get_mut(&handle) {
                     Some((raw, guard_ptr)) => {
                         if !guard_ptr.is_null() {
-                            return Err(format!("mutex_lock: handle {} already locked (non-reentrant)", handle).into());
+                            return Err(format!(
+                                "mutex_lock: handle {} already locked (non-reentrant)",
+                                handle
+                            )
+                            .into());
                         }
-                        let guard = unsafe { raw.as_ref().unwrap().lock().unwrap_or_else(|e| e.into_inner()) };
-                        let leaked = unsafe { std::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(guard) };
+                        let guard = unsafe {
+                            raw.as_ref()
+                                .unwrap()
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                        };
+                        let leaked = unsafe {
+                            std::mem::transmute::<
+                                std::sync::MutexGuard<'_, ()>,
+                                std::sync::MutexGuard<'static, ()>,
+                            >(guard)
+                        };
                         *guard_ptr = Box::leak(Box::new(leaked));
                     }
                     None => return Err(format!("mutex_lock: invalid handle {}", handle).into()),
@@ -830,11 +1207,16 @@ impl Mvm {
             }
             // mutex_unlock -> pop handle, drop guard (set ptr to null)
             87 => {
-                let handle = self.pop()?.as_i64().ok_or("mutex_unlock expected int handle")?;
+                let handle = self
+                    .pop()?
+                    .as_i64()
+                    .ok_or("mutex_unlock expected int handle")?;
                 match self.mutex_table.get_mut(&handle) {
                     Some((_raw, guard_ptr)) => {
                         if guard_ptr.is_null() {
-                            return Err(format!("mutex_unlock: handle {} is not locked", handle).into());
+                            return Err(
+                                format!("mutex_unlock: handle {} is not locked", handle).into()
+                            );
                         }
                         unsafe { drop(Box::from_raw(*guard_ptr as *mut MutexGuard<'static, ()>)) };
                         *guard_ptr = std::ptr::null();
@@ -845,7 +1227,10 @@ impl Mvm {
             }
             // mutex_free -> pop handle, drop guard (if any) and free mutex memory
             88 => {
-                let handle = self.pop()?.as_i64().ok_or("mutex_free expected int handle")?;
+                let handle = self
+                    .pop()?
+                    .as_i64()
+                    .ok_or("mutex_free expected int handle")?;
                 if let Some((raw, guard_ptr)) = self.mutex_table.remove(&handle) {
                     if !guard_ptr.is_null() {
                         unsafe { drop(Box::from_raw(guard_ptr as *mut MutexGuard<'static, ()>)) };

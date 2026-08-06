@@ -19,11 +19,7 @@ fn extract_library_name(repo: &str) -> String {
     // Strip trailing slash
     let trimmed = trimmed.strip_suffix('/').unwrap_or(trimmed);
     // Take the last path segment
-    trimmed
-        .split('/')
-        .last()
-        .unwrap_or(trimmed)
-        .to_string()
+    trimmed.split('/').last().unwrap_or(trimmed).to_string()
 }
 
 fn target_dir(std_include: &Path, name: &str, version: &str) -> PathBuf {
@@ -49,8 +45,7 @@ pub fn exec(args: Args, verbose: bool) -> Result<()> {
     }
 
     // Ensure parent directory exists
-    std::fs::create_dir_all(&std_include)
-        .context("failed to create std include directory")?;
+    std::fs::create_dir_all(&std_include).context("failed to create std include directory")?;
 
     // First try with a "v" prefix (matching git tag convention like v0.1.0),
     // then fall back to the exact version string as-is.
@@ -90,11 +85,7 @@ pub fn exec(args: Args, verbose: bool) -> Result<()> {
     }
 
     if !success {
-        bail!(
-            "git clone failed for {} @ {}",
-            args.repo,
-            args.version
-        );
+        bail!("git clone failed for {} @ {}", args.repo, args.version);
     }
 
     // Remove .git directory to keep std_include clean

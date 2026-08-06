@@ -21,9 +21,7 @@ fn convert(v: toml::Value) -> JsonValue {
             .unwrap_or(JsonValue::Null),
         toml::Value::Boolean(b) => JsonValue::Bool(b),
         toml::Value::Datetime(d) => JsonValue::String(d.to_string()),
-        toml::Value::Array(a) => {
-            JsonValue::Array(a.into_iter().map(convert).collect())
-        }
+        toml::Value::Array(a) => JsonValue::Array(a.into_iter().map(convert).collect()),
         toml::Value::Table(t) => {
             let mut map = serde_json::Map::new();
             for (k, val) in t {

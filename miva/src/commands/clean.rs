@@ -6,7 +6,10 @@ use super::color;
 
 pub fn exec(_verbose: bool) -> Result<()> {
     if !Path::new("miva.toml").exists() {
-        eprintln!("{}", color::error("project not initialized in this directory"));
+        eprintln!(
+            "{}",
+            color::error("project not initialized in this directory")
+        );
         std::process::exit(1);
     }
     let build_dir = std::env::var("MIVA_BUILD_BASIC").unwrap_or_else(|_| "build".to_string());

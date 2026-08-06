@@ -36,7 +36,10 @@ pub struct VmError {
 
 impl VmError {
     pub fn new(kind: TrapKind, message: impl Into<String>) -> Self {
-        VmError { kind, message: message.into() }
+        VmError {
+            kind,
+            message: message.into(),
+        }
     }
 
     pub(crate) fn invalid_bytecode(message: impl Into<String>) -> Self {

@@ -32,7 +32,11 @@ pub(crate) use sigs::*;
 
 #[derive(clap::Args)]
 pub struct Args {
-    #[arg(short = 'b', long, help = "Backend to use: cxx (default) or llvm. Overrides miva.toml project.backend.")]
+    #[arg(
+        short = 'b',
+        long,
+        help = "Backend to use: cxx (default) or llvm. Overrides miva.toml project.backend."
+    )]
     pub backend: Option<String>,
 }
 
@@ -55,12 +59,6 @@ fn determine_entry(project_type: &str) -> &str {
         "src/main.miva"
     }
 }
-
-
-
-
-
-
 
 pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result<()> {
     let project_root = find_project_root()
@@ -85,10 +83,16 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("missing project.type in miva.toml"))?;
 
-    let backend_from_config = config.project_backend().unwrap_or_else(|| "cxx".to_string());
+    let backend_from_config = config
+        .project_backend()
+        .unwrap_or_else(|| "cxx".to_string());
     let backend_name = cli_backend.unwrap_or(backend_from_config);
-    let backend = Backend::from_name(&backend_name)
-        .ok_or_else(|| anyhow::anyhow!("Unknown backend '{}'. Use 'cxx', 'llvm', or 'mvm'.", backend_name))?;
+    let backend = Backend::from_name(&backend_name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown backend '{}'. Use 'cxx', 'llvm', or 'mvm'.",
+            backend_name
+        )
+    })?;
 
     let entry_file = determine_entry(project_type);
 
@@ -104,7 +108,12 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
 
     eprintln!(
         "{}",
-        color::info(&format!("building {} ({}) [backend: {}]", name, project_type, backend.name()))
+        color::info(&format!(
+            "building {} ({}) [backend: {}]",
+            name,
+            project_type,
+            backend.name()
+        ))
     );
 
     let std_path_str = std_include_dir.to_string_lossy();
@@ -118,7 +127,16 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
     };
 
     if !deps.is_empty() {
-        eprintln!("  {}", color::info(&format!("dependencies: {}", deps.iter().map(|(n, v)| format!("{}={}", n, v)).collect::<Vec<_>>().join(", "))));
+        eprintln!(
+            "  {}",
+            color::info(&format!(
+                "dependencies: {}",
+                deps.iter()
+                    .map(|(n, v)| format!("{}={}", n, v))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        );
     }
 
     // Build dependency graph while collecting source files
@@ -221,7 +239,9 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
         let unversioned_link = cache_dir.join(dep_name);
         if versioned_cache.exists() && !unversioned_link.exists() {
             std::os::unix::fs::symlink(
-                versioned_cache.strip_prefix(&cache_dir).unwrap_or(&versioned_cache),
+                versioned_cache
+                    .strip_prefix(&cache_dir)
+                    .unwrap_or(&versioned_cache),
                 &unversioned_link,
             )?;
         }
@@ -282,7 +302,10 @@ pub fn exec(verbose: bool, release: bool, cli_backend: Option<String>) -> Result
                 update_hash_cache(file, &cache_dir, &cache_key, backend);
             }
 
-            eprintln!("{}", color::success(&format!("{} -> {}", name, mvm_path.display())));
+            eprintln!(
+                "{}",
+                color::success(&format!("{} -> {}", name, mvm_path.display()))
+            );
         }
 
         println!("{}", color::success("compilation finished"));

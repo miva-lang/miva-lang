@@ -2,7 +2,8 @@ use super::*;
 
 pub(crate) struct GlobalSigs {
     pub(crate) all_func_sigs: std::collections::HashMap<String, crate::codegen::FuncSig>,
-    pub(crate) global_type_sigs: std::collections::HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>,
+    pub(crate) global_type_sigs:
+        std::collections::HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>,
     pub(crate) global_safety: std::collections::HashMap<String, Safety>,
     pub(crate) global_enums: std::collections::HashMap<String, Vec<crate::ast::EnumVariant>>,
 }
@@ -85,31 +86,28 @@ pub(crate) fn collect_global_sigs(
                 }
                 let qual_prefix = qual_prefix(&module_name, file, &pkg_name);
                 let qual = format!("{}.{}", qual_prefix, name);
-                global_type_sigs
-                    .entry(qual.clone())
-                    .or_insert_with(|| {
-                        let (type_params, params, returns) = match d {
-                            crate::ast::Def::DFunc {
-                                type_params,
-                                params,
-                                returns,
-                                ..
-                            } => {
-                                // Normalize generic types so cross-module
-                                // signatures use TGenericParam (not TStruct)
-                                // for type parameter names — otherwise typecheck
-                                // cannot resolve `T` during instantiation.
-                                let norm_params =
-                                    typecheck::normalize_params(params, type_params);
-                                let norm_returns = returns
-                                    .as_ref()
-                                    .map(|r| typecheck::normalize_typ(r, type_params));
-                                (type_params.clone(), norm_params, norm_returns)
-                            }
-                            _ => (Vec::new(), Vec::new(), None),
-                        };
-                        (type_params, params, returns)
-                    });
+                global_type_sigs.entry(qual.clone()).or_insert_with(|| {
+                    let (type_params, params, returns) = match d {
+                        crate::ast::Def::DFunc {
+                            type_params,
+                            params,
+                            returns,
+                            ..
+                        } => {
+                            // Normalize generic types so cross-module
+                            // signatures use TGenericParam (not TStruct)
+                            // for type parameter names — otherwise typecheck
+                            // cannot resolve `T` during instantiation.
+                            let norm_params = typecheck::normalize_params(params, type_params);
+                            let norm_returns = returns
+                                .as_ref()
+                                .map(|r| typecheck::normalize_typ(r, type_params));
+                            (type_params.clone(), norm_params, norm_returns)
+                        }
+                        _ => (Vec::new(), Vec::new(), None),
+                    };
+                    (type_params, params, returns)
+                });
                 global_safety.entry(qual).or_insert_with(|| safety.clone());
             }
             // Collect enum definitions for cross-module enum pattern matching.
@@ -122,8 +120,12 @@ pub(crate) fn collect_global_sigs(
             {
                 let qual_prefix = qual_prefix(&module_name, file, &pkg_name);
                 let qual = format!("{}.{}", qual_prefix, name);
-                global_enums.entry(qual.clone()).or_insert_with(|| variants.clone());
-                global_enums.entry(name.clone()).or_insert_with(|| variants.clone());
+                global_enums
+                    .entry(qual.clone())
+                    .or_insert_with(|| variants.clone());
+                global_enums
+                    .entry(name.clone())
+                    .or_insert_with(|| variants.clone());
             }
         }
     }

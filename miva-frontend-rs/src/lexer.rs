@@ -14,34 +14,34 @@ pub enum Token<'input> {
     Intro(&'input str),
     Magical(&'input str),
     // Operators / punctuation
-    Eq,           // =
-    ColonEq,      // :=
-    DArrow,       // =>
-    LParen,       // (
-    RParen,       // )
-    LBracket,     // [
-    RBracket,     // ]
-    LBrace,       // {
-    RBrace,       // }
-    Comma,        // ,
-    Dot,          // .
-    Colon,        // :
-    Semi,         // ;
-    Plus,         // +
-    Minus,        // -
-    Star,         // *
-    Slash,        // /
-    EqEq,         // ==
-    Neq,          // !=
-    Lt,           // <
-    Gt,           // >
-    LtEq,         // <=
-    GtEq,         // >=
-    AndAnd,       // &&
-    OrOr,         // ||
-    Amp,          // &
-    Pipe,         // |
-    Not,          // !
+    Eq,       // =
+    ColonEq,  // :=
+    DArrow,   // =>
+    LParen,   // (
+    RParen,   // )
+    LBracket, // [
+    RBracket, // ]
+    LBrace,   // {
+    RBrace,   // }
+    Comma,    // ,
+    Dot,      // .
+    Colon,    // :
+    Semi,     // ;
+    Plus,     // +
+    Minus,    // -
+    Star,     // *
+    Slash,    // /
+    EqEq,     // ==
+    Neq,      // !=
+    Lt,       // <
+    Gt,       // >
+    LtEq,     // <=
+    GtEq,     // >=
+    AndAnd,   // &&
+    OrOr,     // ||
+    Amp,      // &
+    Pipe,     // |
+    Not,      // !
     // Keywords
     Let,
     Struct,
@@ -219,26 +219,28 @@ impl<'input> Lexer<'input> {
         loop {
             match self.peek() {
                 None => return Err("Unterminated multi-line string".to_string()),
-                Some(b'"') if {
-                    let b1 = self.peek();
-                    let b2 = self.peek_next();
-                    let b3 = if self.pos + 2 < self.input.len() {
-                        Some(self.input.as_bytes()[self.pos + 2])
-                    } else {
-                        None
-                    };
-                    b1 == Some(b'"') && b2 == Some(b'"') && b3 == Some(b'"')
-                } => {
+                Some(b'"')
+                    if {
+                        let b1 = self.peek();
+                        let b2 = self.peek_next();
+                        let b3 = if self.pos + 2 < self.input.len() {
+                            Some(self.input.as_bytes()[self.pos + 2])
+                        } else {
+                            None
+                        };
+                        b1 == Some(b'"') && b2 == Some(b'"') && b3 == Some(b'"')
+                    } =>
+                {
                     // Include the closing """ in the output slice
                     self.advance(); // "
                     self.advance(); // "
                     self.advance(); // "
-                    // Return the content BETWEEN the two """ markers
-                    // The content starts after the opening """ (start - 3)
-                    // and ends before the closing """ (self.pos - 3)
+                                    // Return the content BETWEEN the two """ markers
+                                    // The content starts after the opening """ (start - 3)
+                                    // and ends before the closing """ (self.pos - 3)
                     let content_start = start; // start already points past opening """
                     let content_end = self.pos - 3;
-                    return Ok(&self.input[content_start..content_end])
+                    return Ok(&self.input[content_start..content_end]);
                 }
                 Some(b'\n') => {
                     self.advance();
@@ -305,7 +307,6 @@ impl<'input> Lexer<'input> {
     /// Read a number (int or float).
     fn read_number(&mut self) -> Result<&'input str, String> {
         let start = self.pos;
-        // Already consumed first digit
         let mut is_float = false;
         while let Some(b) = self.peek() {
             match b {
@@ -313,8 +314,10 @@ impl<'input> Lexer<'input> {
                     self.advance();
                 }
                 b'.' => {
-                    // Check if next is also a digit (e.g., "3.14")
-                    if self.peek_next().map_or(false, |n| n.is_ascii_digit()) {
+                    if !is_float && self.peek_next().map_or(false, |n| n.is_ascii_digit()) {
+                        if start > 0 && self.input.as_bytes()[start - 1] == b'.' {
+                            break;
+                        }
                         is_float = true;
                         self.advance();
                     } else {
@@ -419,18 +422,25 @@ impl<'input> Iterator for Lexer<'input> {
                 // String literal
                 b'"' => {
                     // Check for multi-line string """
-                    if self.peek_next() == Some(b'"') && self.pos + 2 < self.input.len() && self.input.as_bytes()[self.pos + 2] == b'"' {
+                    if self.peek_next() == Some(b'"')
+                        && self.pos + 2 < self.input.len()
+                        && self.input.as_bytes()[self.pos + 2] == b'"'
+                    {
                         self.advance(); // "
                         self.advance(); // "
                         self.advance(); // "
                         match self.read_multi_string() {
-                            Ok(content) => return Some(Ok((start, Token::StringLit(content), self.pos))),
+                            Ok(content) => {
+                                return Some(Ok((start, Token::StringLit(content), self.pos)))
+                            }
                             Err(e) => return Some(Err(e)),
                         }
                     } else {
                         self.advance(); // opening "
                         match self.read_string() {
-                            Ok(content) => return Some(Ok((start, Token::StringLit(content), self.pos))),
+                            Ok(content) => {
+                                return Some(Ok((start, Token::StringLit(content), self.pos)))
+                            }
                             Err(e) => return Some(Err(e)),
                         }
                     }
@@ -509,9 +519,7 @@ impl<'input> Iterator for Lexer<'input> {
                 }
                 b'-' => {
                     self.advance();
-                    if self.peek().map_or(false, |b| b.is_ascii_digit())
-                        && self.pos == start + 1
-                    {
+                    if self.peek().map_or(false, |b| b.is_ascii_digit()) && self.pos == start + 1 {
                         match self.read_number() {
                             Ok(_) => {
                                 let lit_start = start;
@@ -578,22 +586,20 @@ impl<'input> Iterator for Lexer<'input> {
                     return Some(Ok((start, Token::Semi, self.pos)));
                 }
                 // Numbers
-                b'0'..=b'9' => {
-                    match self.read_number() {
-                        Ok(text) => {
-                            if text.contains('.') {
-                                return Some(Ok((start, Token::FloatLit(text), self.pos)));
-                            } else {
-                                return Some(Ok((start, Token::IntLit(text), self.pos)));
-                            }
+                b'0'..=b'9' => match self.read_number() {
+                    Ok(text) => {
+                        if text.contains('.') {
+                            return Some(Ok((start, Token::FloatLit(text), self.pos)));
+                        } else {
+                            return Some(Ok((start, Token::IntLit(text), self.pos)));
                         }
-                        Err(e) => return Some(Err(e)),
                     }
-                }
+                    Err(e) => return Some(Err(e)),
+                },
                 // Identifiers / keywords
                 _ if b.is_ascii_alphabetic() || b == b'_' => {
                     self.advance(); // consume first byte
-                    // Read remaining identifier characters from current position
+                                    // Read remaining identifier characters from current position
                     while let Some(b) = self.peek() {
                         if b.is_ascii_alphanumeric() || b == b'_' {
                             self.advance();
@@ -631,7 +637,6 @@ impl<'input> Iterator for Lexer<'input> {
                         "test" => Token::Test,
                         "unsafe" => Token::Unsafe,
                         "trusted" => Token::Trusted,
-                        "c" => Token::CKeyword,
                         "inline" => Token::Inline,
                         "async" => Token::Async,
                         "ptr" => Token::Ptr,
@@ -676,9 +681,7 @@ mod tests {
 
     fn collect(input: &str) -> Vec<(usize, Token, usize)> {
         let lexer = Lexer::new(input);
-        lexer
-            .filter_map(|r| r.ok())
-            .collect()
+        lexer.filter_map(|r| r.ok()).collect()
     }
 
     fn collect_with_errors(input: &str) -> Vec<Result<(usize, Token, usize), String>> {
@@ -755,7 +758,6 @@ mod tests {
         assert_eq!(first_token("mut"), Some(Token::Mut));
         assert_eq!(first_token("unsafe"), Some(Token::Unsafe));
         assert_eq!(first_token("trusted"), Some(Token::Trusted));
-        assert_eq!(first_token("c"), Some(Token::CKeyword));
         assert_eq!(first_token("inline"), Some(Token::Inline));
         assert_eq!(first_token("int"), Some(Token::Int));
         assert_eq!(first_token("bool"), Some(Token::Bool));
@@ -801,12 +803,27 @@ mod tests {
     fn test_operators() {
         let toks = collect("== != := => + - * = < > ! . , ; : ( ) [ ] { }");
         let expected = vec![
-            Token::EqEq, Token::Neq, Token::ColonEq, Token::DArrow,
-            Token::Plus, Token::Minus, Token::Star, Token::Eq,
-            Token::Lt, Token::Gt, Token::Not,
-            Token::Dot, Token::Comma, Token::Semi, Token::Colon,
-            Token::LParen, Token::RParen, Token::LBracket, Token::RBracket,
-            Token::LBrace, Token::RBrace,
+            Token::EqEq,
+            Token::Neq,
+            Token::ColonEq,
+            Token::DArrow,
+            Token::Plus,
+            Token::Minus,
+            Token::Star,
+            Token::Eq,
+            Token::Lt,
+            Token::Gt,
+            Token::Not,
+            Token::Dot,
+            Token::Comma,
+            Token::Semi,
+            Token::Colon,
+            Token::LParen,
+            Token::RParen,
+            Token::LBracket,
+            Token::RBracket,
+            Token::LBrace,
+            Token::RBrace,
         ];
         for (i, exp) in expected.into_iter().enumerate() {
             assert_eq!(

@@ -16,7 +16,9 @@ mod warning;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use commands::{build, clean, dep, get_cmd, init_cmd, reinit_cmd, run, sin_build, sin_run, test_cmd};
+use commands::{
+    build, clean, dep, get_cmd, init_cmd, reinit_cmd, run, sin_build, sin_run, test_cmd,
+};
 
 use crate::commands::color;
 
@@ -66,7 +68,16 @@ enum Command {
 /// Names of the built-in subcommands. Built-ins always take precedence over
 /// custom scripts defined in the `[scripts]` section of `miva.toml`.
 const BUILTIN_COMMANDS: &[&str] = &[
-    "init", "build", "run", "clean", "sin-build", "sin-run", "get", "dep", "test", "reinit",
+    "init",
+    "build",
+    "run",
+    "clean",
+    "sin-build",
+    "sin-run",
+    "get",
+    "dep",
+    "test",
+    "reinit",
 ];
 
 fn is_builtin_command(name: &str) -> bool {
@@ -75,7 +86,10 @@ fn is_builtin_command(name: &str) -> bool {
 
 /// Execute a custom script from the `[scripts]` section of `miva.toml`.
 fn run_script(name: &str, script: &str) -> Result<()> {
-    eprintln!("{}", color::info(&format!("running script `{name}`: {script}")));
+    eprintln!(
+        "{}",
+        color::info(&format!("running script `{name}`: {script}"))
+    );
     let status = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
         .arg(if cfg!(windows) { "/C" } else { "-c" })
         .arg(script)

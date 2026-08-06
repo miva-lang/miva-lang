@@ -29,30 +29,44 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             let ptr_tmp = ctx.gen_tmp("sp");
             body.push_str(&format!(
                 "{}{} = getelementptr [{} x i8], ptr @{}, i64 0, i64 0\n",
-                ctx.indent_str(), ptr_tmp, len, const_name
+                ctx.indent_str(),
+                ptr_tmp,
+                len,
+                const_name
             ));
             let call_tmp = ctx.gen_tmp("sc");
             body.push_str(&format!(
                 "{}{} = call ptr @miva_string_from_str(ptr {})\n",
-                ctx.indent_str(), call_tmp, ptr_tmp
+                ctx.indent_str(),
+                call_tmp,
+                ptr_tmp
             ));
             let int_tmp = ctx.gen_tmp("si");
             body.push_str(&format!(
                 "{}{} = ptrtoint ptr {} to i64\n",
-                ctx.indent_str(), int_tmp, call_tmp
+                ctx.indent_str(),
+                int_tmp,
+                call_tmp
             ));
             int_tmp
         }
         Expr::EFloat { value, .. } => {
             let tmp = ctx.gen_tmp("ftmp");
-            body.push_str(&format!("{}{} = fadd double 0.0, {}\n", ctx.indent_str(), tmp, value));
+            body.push_str(&format!(
+                "{}{} = fadd double 0.0, {}\n",
+                ctx.indent_str(),
+                tmp,
+                value
+            ));
             tmp
         }
         Expr::EChar { value, .. } => {
             let c = value.as_bytes().first().copied().unwrap_or(0) as i64;
             format!("{}", c)
         }
-        Expr::EBinOp { op, left, right, .. } => {
+        Expr::EBinOp {
+            op, left, right, ..
+        } => {
             let l = gen_expr(left, ctx, body);
             let r = gen_expr(right, ctx, body);
             match op {
@@ -60,73 +74,228 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                     if is_string_expr(left) || is_string_expr(right) {
                         let sp_l = ctx.gen_tmp("sp");
                         let sp_r = ctx.gen_tmp("sp");
-                        body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), sp_l, l));
-                        body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), sp_r, r));
+                        body.push_str(&format!(
+                            "{}{} = inttoptr i64 {} to ptr\n",
+                            ctx.indent_str(),
+                            sp_l,
+                            l
+                        ));
+                        body.push_str(&format!(
+                            "{}{} = inttoptr i64 {} to ptr\n",
+                            ctx.indent_str(),
+                            sp_r,
+                            r
+                        ));
                         let call_tmp = ctx.gen_tmp("call");
-                        body.push_str(&format!("{}{} = call ptr @miva_string_concat(ptr {}, ptr {})\n", ctx.indent_str(), call_tmp, sp_l, sp_r));
+                        body.push_str(&format!(
+                            "{}{} = call ptr @miva_string_concat(ptr {}, ptr {})\n",
+                            ctx.indent_str(),
+                            call_tmp,
+                            sp_l,
+                            sp_r
+                        ));
                         let int_tmp = ctx.gen_tmp("cr");
-                        body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, call_tmp));
+                        body.push_str(&format!(
+                            "{}{} = ptrtoint ptr {} to i64\n",
+                            ctx.indent_str(),
+                            int_tmp,
+                            call_tmp
+                        ));
                         int_tmp
                     } else {
                         let tmp = ctx.gen_tmp("add");
-                        body.push_str(&format!("{}{} = add i64 {}, {}\n", ctx.indent_str(), tmp, l, r));
+                        body.push_str(&format!(
+                            "{}{} = add i64 {}, {}\n",
+                            ctx.indent_str(),
+                            tmp,
+                            l,
+                            r
+                        ));
                         tmp
                     }
                 }
-                BinOp::Sub => { let tmp = ctx.gen_tmp("sub"); body.push_str(&format!("{}{} = sub i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); tmp }
-                BinOp::Mul => { let tmp = ctx.gen_tmp("mul"); body.push_str(&format!("{}{} = mul i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); tmp }
-                BinOp::Div => { let tmp = ctx.gen_tmp("div"); body.push_str(&format!("{}{} = sdiv i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); tmp }
-                BinOp::Eq => {
+                BinOp::Sub => {
+                    let tmp = ctx.gen_tmp("sub");
+                    body.push_str(&format!(
+                        "{}{} = sub i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    tmp
+                }
+                BinOp::Mul => {
+                    let tmp = ctx.gen_tmp("mul");
+                    body.push_str(&format!(
+                        "{}{} = mul i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    tmp
+                }
+                BinOp::Div => {
+                    let tmp = ctx.gen_tmp("div");
+                    body.push_str(&format!(
+                        "{}{} = sdiv i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    tmp
+                }
+                BinOp::Eq | BinOp::Neq => {
+                    let want_eq = matches!(op, BinOp::Eq);
                     if is_enum_value_expr(left.as_ref()) || is_enum_value_expr(right.as_ref()) {
                         let lt = load_enum_tag(ctx, body, &l);
                         let rt = load_enum_tag(ctx, body, &r);
                         let tmp = ctx.gen_tmp("cmp");
-                        body.push_str(&format!("{}{} = icmp eq i64 {}, {}\n", ctx.indent_str(), tmp, lt, rt));
+                        let pred = if want_eq { "eq" } else { "ne" };
+                        body.push_str(&format!(
+                            "{}{} = icmp {} i64 {}, {}\n",
+                            ctx.indent_str(),
+                            tmp,
+                            pred,
+                            lt,
+                            rt
+                        ));
                         let tmp2 = ctx.gen_tmp("cmpz");
-                        body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp));
+                        body.push_str(&format!(
+                            "{}{} = zext i1 {} to i64\n",
+                            ctx.indent_str(),
+                            tmp2,
+                            tmp
+                        ));
                         tmp2
+                    } else if let Some(agg) = aggregate_compare_type(left, right, ctx) {
+                        gen_deep_compare(&l, &r, &agg, want_eq, ctx, body)
                     } else {
                         let tmp = ctx.gen_tmp("cmp");
-                        body.push_str(&format!("{}{} = icmp eq i64 {}, {}\n", ctx.indent_str(), tmp, l, r));
+                        let pred = if want_eq { "eq" } else { "ne" };
+                        body.push_str(&format!(
+                            "{}{} = icmp {} i64 {}, {}\n",
+                            ctx.indent_str(),
+                            tmp,
+                            pred,
+                            l,
+                            r
+                        ));
                         let tmp2 = ctx.gen_tmp("cmpz");
-                        body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp));
+                        body.push_str(&format!(
+                            "{}{} = zext i1 {} to i64\n",
+                            ctx.indent_str(),
+                            tmp2,
+                            tmp
+                        ));
                         tmp2
                     }
                 }
-                BinOp::Neq => {
-                    if is_enum_value_expr(left.as_ref()) || is_enum_value_expr(right.as_ref()) {
-                        let lt = load_enum_tag(ctx, body, &l);
-                        let rt = load_enum_tag(ctx, body, &r);
-                        let tmp = ctx.gen_tmp("cmp");
-                        body.push_str(&format!("{}{} = icmp ne i64 {}, {}\n", ctx.indent_str(), tmp, lt, rt));
-                        let tmp2 = ctx.gen_tmp("cmpz");
-                        body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp));
-                        tmp2
-                    } else {
-                        let tmp = ctx.gen_tmp("cmp");
-                        body.push_str(&format!("{}{} = icmp ne i64 {}, {}\n", ctx.indent_str(), tmp, l, r));
-                        let tmp2 = ctx.gen_tmp("cmpz");
-                        body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp));
-                        tmp2
-                    }
+                BinOp::Lt => {
+                    let tmp = ctx.gen_tmp("cmp");
+                    body.push_str(&format!(
+                        "{}{} = icmp slt i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    let tmp2 = ctx.gen_tmp("cmpz");
+                    body.push_str(&format!(
+                        "{}{} = zext i1 {} to i64\n",
+                        ctx.indent_str(),
+                        tmp2,
+                        tmp
+                    ));
+                    tmp2
                 }
-                BinOp::Lt => { let tmp = ctx.gen_tmp("cmp"); body.push_str(&format!("{}{} = icmp slt i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); let tmp2 = ctx.gen_tmp("cmpz"); body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp)); tmp2 }
-                BinOp::Gt => { let tmp = ctx.gen_tmp("cmp"); body.push_str(&format!("{}{} = icmp sgt i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); let tmp2 = ctx.gen_tmp("cmpz"); body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp)); tmp2 }
-                BinOp::Le => { let tmp = ctx.gen_tmp("cmp"); body.push_str(&format!("{}{} = icmp sle i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); let tmp2 = ctx.gen_tmp("cmpz"); body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp)); tmp2 }
-                BinOp::Ge => { let tmp = ctx.gen_tmp("cmp"); body.push_str(&format!("{}{} = icmp sge i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); let tmp2 = ctx.gen_tmp("cmpz"); body.push_str(&format!("{}{} = zext i1 {} to i64\n", ctx.indent_str(), tmp2, tmp)); tmp2 }
+                BinOp::Gt => {
+                    let tmp = ctx.gen_tmp("cmp");
+                    body.push_str(&format!(
+                        "{}{} = icmp sgt i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    let tmp2 = ctx.gen_tmp("cmpz");
+                    body.push_str(&format!(
+                        "{}{} = zext i1 {} to i64\n",
+                        ctx.indent_str(),
+                        tmp2,
+                        tmp
+                    ));
+                    tmp2
+                }
+                BinOp::Le => {
+                    let tmp = ctx.gen_tmp("cmp");
+                    body.push_str(&format!(
+                        "{}{} = icmp sle i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    let tmp2 = ctx.gen_tmp("cmpz");
+                    body.push_str(&format!(
+                        "{}{} = zext i1 {} to i64\n",
+                        ctx.indent_str(),
+                        tmp2,
+                        tmp
+                    ));
+                    tmp2
+                }
+                BinOp::Ge => {
+                    let tmp = ctx.gen_tmp("cmp");
+                    body.push_str(&format!(
+                        "{}{} = icmp sge i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    let tmp2 = ctx.gen_tmp("cmpz");
+                    body.push_str(&format!(
+                        "{}{} = zext i1 {} to i64\n",
+                        ctx.indent_str(),
+                        tmp2,
+                        tmp
+                    ));
+                    tmp2
+                }
                 // Short-circuit logical: LLVM has no native short-circuit icmp;
                 // emit `and i1`/`or i1` over the two bool i64 operands (each
                 // truncated to i1 first). vec.miva relies on these only inside
                 // `if (...)` conditions, so eager evaluation is fine for now.
                 BinOp::And => {
-                    let tmp = ctx.gen_tmp("and"); body.push_str(&format!("{}{} = and i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); tmp
+                    let tmp = ctx.gen_tmp("and");
+                    body.push_str(&format!(
+                        "{}{} = and i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    tmp
                 }
                 BinOp::Or => {
-                    let tmp = ctx.gen_tmp("or"); body.push_str(&format!("{}{} = or i64 {}, {}\n", ctx.indent_str(), tmp, l, r)); tmp
+                    let tmp = ctx.gen_tmp("or");
+                    body.push_str(&format!(
+                        "{}{} = or i64 {}, {}\n",
+                        ctx.indent_str(),
+                        tmp,
+                        l,
+                        r
+                    ));
+                    tmp
                 }
             }
         }
-        Expr::EIf { cond, then, else_, .. } => {
+        Expr::EIf {
+            cond, then, else_, ..
+        } => {
             let cond_val = gen_expr(cond, ctx, body);
             let cmp = ctx.gen_tmp("ifc");
             let label_then = ctx.gen_label("then");
@@ -134,10 +303,23 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             let label_end = ctx.gen_label("ifend");
             let var_reloads_before = ctx.var_reloads.clone();
             let var_addrs_before = ctx.var_addrs.clone();
-            body.push_str(&format!("{}{} = icmp ne i64 {}, 0\n", ctx.indent_str(), cmp, cond_val));
-            body.push_str(&format!("{}br i1 {}, label %{}, label %{}\n", ctx.indent_str(), cmp, label_then, label_else));
+            body.push_str(&format!(
+                "{}{} = icmp ne i64 {}, 0\n",
+                ctx.indent_str(),
+                cmp,
+                cond_val
+            ));
+            body.push_str(&format!(
+                "{}br i1 {}, label %{}, label %{}\n",
+                ctx.indent_str(),
+                cmp,
+                label_then,
+                label_else
+            ));
             body.push_str(&format!("{}:\n", label_then));
-            ctx.indent += 1; let then_val = gen_expr(then, ctx, body); ctx.indent -= 1;
+            ctx.indent += 1;
+            let then_val = gen_expr(then, ctx, body);
+            ctx.indent -= 1;
             let var_reloads_after_then = ctx.var_reloads.clone();
             // If the `then` branch already terminates (e.g. it `return`s), do not
             // emit a fall-through `br` and do not list it as a phi predecessor.
@@ -148,7 +330,13 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             ctx.var_reloads = var_reloads_before.clone();
             ctx.var_addrs = var_addrs_before.clone();
             body.push_str(&format!("{}:\n", label_else));
-            ctx.indent += 1; let else_val = if let Some(else_expr) = else_ { gen_expr(else_expr, ctx, body) } else { "0".to_string() }; ctx.indent -= 1;
+            ctx.indent += 1;
+            let else_val = if let Some(else_expr) = else_ {
+                gen_expr(else_expr, ctx, body)
+            } else {
+                "0".to_string()
+            };
+            ctx.indent -= 1;
             let else_terminated = body_ends_in_terminator(body);
             // If the else branch itself ended in its own merge block (a phi at
             // a fresh ifend label), the actual control flow to `label_end` is
@@ -156,7 +344,8 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             // recent block — we need to forward through the inner merge
             // rather than appending an unconditional `br` here.
             let else_pred_label = label_else.clone();
-            let (else_pred_label, else_ends_in_merge) = detect_last_merge_label(body, label_else.clone());
+            let (else_pred_label, else_ends_in_merge) =
+                detect_last_merge_label(body, label_else.clone());
             if !else_terminated {
                 if let Some(merge) = else_ends_in_merge.as_ref() {
                     // Forward `br label %label_end` through the inner merge
@@ -175,7 +364,9 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             let phi_tmp = ctx.gen_tmp("phi");
             // Only non-terminated branches actually reach the merge block.
             let mut phi_entries = String::new();
-            if !then_terminated { phi_entries.push_str(&format!("[ {}, %{} ], ", then_val, label_then)); }
+            if !then_terminated {
+                phi_entries.push_str(&format!("[ {}, %{} ], ", then_val, label_then));
+            }
             if let Some(merge) = else_ends_in_merge.as_ref() {
                 phi_entries.push_str(&format!("[ {}, %{} ], ", else_val, merge));
             } else if !else_terminated {
@@ -185,25 +376,39 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 // Drop the trailing ", ".
                 phi_entries.truncate(phi_entries.trim_end_matches(char::is_whitespace).len());
                 phi_entries.truncate(phi_entries.trim_end_matches(',').len());
-                body.push_str(&format!("{}{} = phi i64 {}\n", ctx.indent_str(), phi_tmp, phi_entries));
+                body.push_str(&format!(
+                    "{}{} = phi i64 {}\n",
+                    ctx.indent_str(),
+                    phi_tmp,
+                    phi_entries
+                ));
             }
             // Restore var_addrs to pre-if state (branch-scoped allocations don't dominate post-if code)
             ctx.var_addrs = var_addrs_before;
             // Only reload variables that existed before the if (not ones declared inside branches)
             let changed_names: Vec<String> = {
                 let vr = &ctx.var_reloads;
-                vr.keys().filter(|name| {
-                    var_reloads_before.get(*name).is_some() &&
-                    ctx.var_addrs.contains_key(*name) &&
-                    (var_reloads_after_then.get(*name) != var_reloads_before.get(*name) ||
-                     vr.get(*name) != var_reloads_before.get(*name))
-                }).cloned().collect()
+                vr.keys()
+                    .filter(|name| {
+                        var_reloads_before.get(*name).is_some()
+                            && ctx.var_addrs.contains_key(*name)
+                            && (var_reloads_after_then.get(*name) != var_reloads_before.get(*name)
+                                || vr.get(*name) != var_reloads_before.get(*name))
+                    })
+                    .cloned()
+                    .collect()
             };
             emit_fresh_loads(ctx, body, &var_reloads_before, &changed_names);
             phi_tmp
         }
-        Expr::EWhile { cond, body: while_body, .. } => {
-            let label_cond = ctx.gen_label("wcond"); let label_body = ctx.gen_label("wbody"); let label_end = ctx.gen_label("wend");
+        Expr::EWhile {
+            cond,
+            body: while_body,
+            ..
+        } => {
+            let label_cond = ctx.gen_label("wcond");
+            let label_body = ctx.gen_label("wbody");
+            let label_end = ctx.gen_label("wend");
             let var_reloads_before = ctx.var_reloads.clone();
             let var_addrs_before = ctx.var_addrs.clone();
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_cond));
@@ -217,51 +422,88 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 if var_reloads_before.contains_key(name) {
                     let reload = format!("{}.reloop.{}", name, ctx.tmp_counter);
                     ctx.tmp_counter += 1;
-                    body.push_str(&format!("{}%{} = load i64, ptr %{}, align 8\n", ctx.indent_str(), reload, addr));
+                    body.push_str(&format!(
+                        "{}%{} = load i64, ptr %{}, align 8\n",
+                        ctx.indent_str(),
+                        reload,
+                        addr
+                    ));
                     ctx.var_reloads.insert(name.clone(), reload);
                 }
             }
-            let cond_val = gen_expr(cond, ctx, body); let cmp = ctx.gen_tmp("wc");
-            body.push_str(&format!("{}{} = icmp ne i64 {}, 0\n", ctx.indent_str(), cmp, cond_val));
-            body.push_str(&format!("{}br i1 {}, label %{}, label %{}\n", ctx.indent_str(), cmp, label_body, label_end));
-            body.push_str(&format!("{}:\n", label_body)); ctx.indent += 1; gen_expr(while_body, ctx, body); ctx.indent -= 1;
+            let cond_val = gen_expr(cond, ctx, body);
+            let cmp = ctx.gen_tmp("wc");
+            body.push_str(&format!(
+                "{}{} = icmp ne i64 {}, 0\n",
+                ctx.indent_str(),
+                cmp,
+                cond_val
+            ));
+            body.push_str(&format!(
+                "{}br i1 {}, label %{}, label %{}\n",
+                ctx.indent_str(),
+                cmp,
+                label_body,
+                label_end
+            ));
+            body.push_str(&format!("{}:\n", label_body));
+            ctx.indent += 1;
+            gen_expr(while_body, ctx, body);
+            ctx.indent -= 1;
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_cond));
             body.push_str(&format!("{}:\n", label_end));
             // Restore var_addrs to pre-loop state
             ctx.var_addrs = var_addrs_before;
             let changed_names: Vec<String> = {
                 let vr = &ctx.var_reloads;
-                vr.keys().filter(|name| {
-                    var_reloads_before.get(*name).is_some() &&
-                    ctx.var_addrs.contains_key(*name) &&
-                    var_reloads_before.get(*name) != vr.get(*name)
-                }).cloned().collect()
+                vr.keys()
+                    .filter(|name| {
+                        var_reloads_before.get(*name).is_some()
+                            && ctx.var_addrs.contains_key(*name)
+                            && var_reloads_before.get(*name) != vr.get(*name)
+                    })
+                    .cloned()
+                    .collect()
             };
             emit_fresh_loads(ctx, body, &var_reloads_before, &changed_names);
             "0".to_string()
         }
-        Expr::ELoop { body: loop_body, .. } => {
-            let label_body = ctx.gen_label("lbody"); let label_end = ctx.gen_label("lend");
+        Expr::ELoop {
+            body: loop_body, ..
+        } => {
+            let label_body = ctx.gen_label("lbody");
+            let label_end = ctx.gen_label("lend");
             let var_reloads_before = ctx.var_reloads.clone();
             let var_addrs_before = ctx.var_addrs.clone();
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_body));
-            body.push_str(&format!("{}:\n", label_body)); ctx.indent += 1; gen_expr(loop_body, ctx, body); ctx.indent -= 1;
+            body.push_str(&format!("{}:\n", label_body));
+            ctx.indent += 1;
+            gen_expr(loop_body, ctx, body);
+            ctx.indent -= 1;
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_body));
             body.push_str(&format!("{}:\n", label_end));
             // Restore var_addrs to pre-loop state
             ctx.var_addrs = var_addrs_before;
             let changed_names: Vec<String> = {
                 let vr = &ctx.var_reloads;
-                vr.keys().filter(|name| {
-                    var_reloads_before.get(*name).is_some() &&
-                    ctx.var_addrs.contains_key(*name) &&
-                    var_reloads_before.get(*name) != vr.get(*name)
-                }).cloned().collect()
+                vr.keys()
+                    .filter(|name| {
+                        var_reloads_before.get(*name).is_some()
+                            && ctx.var_addrs.contains_key(*name)
+                            && var_reloads_before.get(*name) != vr.get(*name)
+                    })
+                    .cloned()
+                    .collect()
             };
             emit_fresh_loads(ctx, body, &var_reloads_before, &changed_names);
             "0".to_string()
         }
-        Expr::EFor { var, range, body: for_body, .. } => {
+        Expr::EFor {
+            var,
+            range,
+            body: for_body,
+            ..
+        } => {
             // `range(n)` loops n times with the loop var as the counter — the
             // range builtin returns void in LLVM, so its argument is used
             // directly as the loop bound. Any other range value is an array
@@ -274,13 +516,25 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 _ => {
                     let arr = gen_expr(range, ctx, body);
                     let ptr = ctx.gen_tmp("farr");
-                    body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr, arr));
+                    body.push_str(&format!(
+                        "{}{} = inttoptr i64 {} to ptr\n",
+                        ctx.indent_str(),
+                        ptr,
+                        arr
+                    ));
                     let len = ctx.gen_tmp("flen");
-                    body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), len, ptr));
+                    body.push_str(&format!(
+                        "{}{} = load i64, ptr {}\n",
+                        ctx.indent_str(),
+                        len,
+                        ptr
+                    ));
                     (len, Some(ptr))
                 }
             };
-            let label_cond = ctx.gen_label("fcond"); let label_body = ctx.gen_label("fbody"); let label_end = ctx.gen_label("fend");
+            let label_cond = ctx.gen_label("fcond");
+            let label_body = ctx.gen_label("fbody");
+            let label_end = ctx.gen_label("fend");
             let var_reloads_before = ctx.var_reloads.clone();
             let var_addrs_before = ctx.var_addrs.clone();
             // Declare the loop variable (creates an alloca address)
@@ -303,34 +557,83 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             // Reload loop counter
             let counter_name = format!("{}.fv.{}", var, ctx.tmp_counter);
             ctx.tmp_counter += 1;
-            body.push_str(&format!("  %{} = load i64, ptr %{}, align 8\n", counter_name, counter_addr));
+            body.push_str(&format!(
+                "  %{} = load i64, ptr %{}, align 8\n",
+                counter_name, counter_addr
+            ));
             let cmp = ctx.gen_tmp("fc");
-            body.push_str(&format!("{}{} = icmp slt i64 %{}, {}\n", ctx.indent_str(), cmp, counter_name, bound));
-            body.push_str(&format!("{}br i1 {}, label %{}, label %{}\n", ctx.indent_str(), cmp, label_body, label_end));
-            body.push_str(&format!("{}:\n", label_body)); ctx.indent += 1;
+            body.push_str(&format!(
+                "{}{} = icmp slt i64 %{}, {}\n",
+                ctx.indent_str(),
+                cmp,
+                counter_name,
+                bound
+            ));
+            body.push_str(&format!(
+                "{}br i1 {}, label %{}, label %{}\n",
+                ctx.indent_str(),
+                cmp,
+                label_body,
+                label_end
+            ));
+            body.push_str(&format!("{}:\n", label_body));
+            ctx.indent += 1;
             let reload_name = if let Some(ptr) = &arr_ptr {
                 // Load the element at counter+1 into the loop var.
                 let off = ctx.gen_tmp("feo");
-                body.push_str(&format!("{}{} = add i64 %{}, 1\n", ctx.indent_str(), off, counter_name));
+                body.push_str(&format!(
+                    "{}{} = add i64 %{}, 1\n",
+                    ctx.indent_str(),
+                    off,
+                    counter_name
+                ));
                 let gep = ctx.gen_tmp("feg");
-                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr, off));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    ptr,
+                    off
+                ));
                 let elem = ctx.gen_tmp("fel");
-                body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), elem, gep));
-                body.push_str(&format!("{}store i64 {}, ptr %{}, align 8\n", ctx.indent_str(), elem, addr));
+                body.push_str(&format!(
+                    "{}{} = load i64, ptr {}\n",
+                    ctx.indent_str(),
+                    elem,
+                    gep
+                ));
+                body.push_str(&format!(
+                    "{}store i64 {}, ptr %{}, align 8\n",
+                    ctx.indent_str(),
+                    elem,
+                    addr
+                ));
                 let r = format!("{}.fv.{}", var, ctx.tmp_counter);
                 ctx.tmp_counter += 1;
-                body.push_str(&format!("{}%{} = load i64, ptr %{}, align 8\n", ctx.indent_str(), r, addr));
+                body.push_str(&format!(
+                    "{}%{} = load i64, ptr %{}, align 8\n",
+                    ctx.indent_str(),
+                    r,
+                    addr
+                ));
                 r
             } else {
                 counter_name.clone()
             };
             ctx.var_reloads.insert(var.clone(), reload_name);
-            gen_expr(for_body, ctx, body); ctx.indent -= 1;
+            gen_expr(for_body, ctx, body);
+            ctx.indent -= 1;
             // Increment and store loop counter back
             let next_name = format!("{}.fn.{}", var, ctx.tmp_counter);
             ctx.tmp_counter += 1;
-            body.push_str(&format!("  %{} = add i64 %{}, 1\n", next_name, counter_name));
-            body.push_str(&format!("  store i64 %{}, ptr %{}, align 8\n", next_name, counter_addr));
+            body.push_str(&format!(
+                "  %{} = add i64 %{}, 1\n",
+                next_name, counter_name
+            ));
+            body.push_str(&format!(
+                "  store i64 %{}, ptr %{}, align 8\n",
+                next_name, counter_addr
+            ));
             body.push_str(&format!("{}br label %{}\n", ctx.indent_str(), label_cond));
             body.push_str(&format!("{}:\n", label_end));
             // Loop variable is out of scope after the loop
@@ -340,24 +643,57 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             // Only reload variables that existed before the loop (not ones declared inside)
             let changed_names: Vec<String> = {
                 let vr = &ctx.var_reloads;
-                vr.keys().filter(|name| {
-                    var_reloads_before.get(*name).is_some() &&
-                    ctx.var_addrs.contains_key(*name) &&
-                    var_reloads_before.get(*name) != vr.get(*name)
-                }).cloned().collect()
+                vr.keys()
+                    .filter(|name| {
+                        var_reloads_before.get(*name).is_some()
+                            && ctx.var_addrs.contains_key(*name)
+                            && var_reloads_before.get(*name) != vr.get(*name)
+                    })
+                    .cloned()
+                    .collect()
             };
             emit_fresh_loads(ctx, body, &var_reloads_before, &changed_names);
             "0".to_string()
         }
-        Expr::EVar { name, .. } | Expr::EMove { name, .. } | Expr::EClone { name, .. } => ctx.get_var_reload(name),
+        Expr::EVar { name, .. } | Expr::EMove { name, .. } | Expr::EClone { name, .. } => {
+            ctx.get_var_reload(name)
+        }
         Expr::EVoid { .. } => "0".to_string(),
-        Expr::ECall { name, type_args, args, .. } => gen_call(name, args, type_args, ctx, body),
-        Expr::EMethodCall { method, type_args, args, .. } => gen_call(method, args, type_args, ctx, body),
+        Expr::ECall {
+            name,
+            type_args,
+            args,
+            ..
+        } => gen_call(name, args, type_args, ctx, body),
+        Expr::EMethodCall {
+            method,
+            type_args,
+            args,
+            ..
+        } => gen_call(method, args, type_args, ctx, body),
         Expr::ECast { expr, to, .. } => {
             let val = gen_expr(expr, ctx, body);
             match to {
-                Typ::TFloat64 => { let tmp = ctx.gen_tmp("cast"); body.push_str(&format!("{}{} = sitofp i64 {} to double\n", ctx.indent_str(), tmp, val)); tmp }
-                Typ::TFloat32 => { let tmp = ctx.gen_tmp("cast"); body.push_str(&format!("{}{} = sitofp i64 {} to float\n", ctx.indent_str(), tmp, val)); tmp }
+                Typ::TFloat64 => {
+                    let tmp = ctx.gen_tmp("cast");
+                    body.push_str(&format!(
+                        "{}{} = sitofp i64 {} to double\n",
+                        ctx.indent_str(),
+                        tmp,
+                        val
+                    ));
+                    tmp
+                }
+                Typ::TFloat32 => {
+                    let tmp = ctx.gen_tmp("cast");
+                    body.push_str(&format!(
+                        "{}{} = sitofp i64 {} to float\n",
+                        ctx.indent_str(),
+                        tmp,
+                        val
+                    ));
+                    tmp
+                }
                 _ => val,
             }
         }
@@ -391,57 +727,133 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                     )
                 })
                 .collect();
-            for stmt in stmts { gen_stmt(stmt, ctx, body); }
-            let out = match result { Some(r) => gen_expr(r, ctx, body), None => "0".to_string() };
+            for stmt in stmts {
+                gen_stmt(stmt, ctx, body);
+            }
+            let out = match result {
+                Some(r) => gen_expr(r, ctx, body),
+                None => "0".to_string(),
+            };
             for (name, addr, reload, typ) in saved {
                 match addr {
-                    Some(a) => { ctx.var_addrs.insert(name.clone(), a); }
-                    None => { ctx.var_addrs.remove(&name); }
+                    Some(a) => {
+                        ctx.var_addrs.insert(name.clone(), a);
+                    }
+                    None => {
+                        ctx.var_addrs.remove(&name);
+                    }
                 }
                 match reload {
-                    Some(r) => { ctx.var_reloads.insert(name.clone(), r); }
-                    None => { ctx.var_reloads.remove(&name); }
+                    Some(r) => {
+                        ctx.var_reloads.insert(name.clone(), r);
+                    }
+                    None => {
+                        ctx.var_reloads.remove(&name);
+                    }
                 }
                 match typ {
-                    Some(t) => { ctx.var_types.insert(name.clone(), t); }
-                    None => { ctx.var_types.remove(&name); }
+                    Some(t) => {
+                        ctx.var_types.insert(name.clone(), t);
+                    }
+                    None => {
+                        ctx.var_types.remove(&name);
+                    }
                 }
             }
             out
         }
-        Expr::EStructLit { name: struct_name, fields, .. } => {
+        Expr::EStructLit {
+            name: struct_name,
+            fields,
+            ..
+        } => {
             let tmp = ctx.gen_tmp("st");
             let size = fields.len() * 8;
-            body.push_str(&format!("{}{} = call ptr @miva_alloc(i64 {})\n", ctx.indent_str(), tmp, size));
+            body.push_str(&format!(
+                "{}{} = call ptr @miva_alloc(i64 {})\n",
+                ctx.indent_str(),
+                tmp,
+                size
+            ));
             for (i, f) in fields.iter().enumerate() {
                 let fv = gen_expr(&f.value, ctx, body);
                 let gep = ctx.gen_tmp("sf");
-                body.push_str(&format!("{}{} = getelementptr i8, ptr {}, i64 {}\n", ctx.indent_str(), gep, tmp, i * 8));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i8, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    tmp,
+                    i * 8
+                ));
                 let gep_typed = ctx.gen_tmp("sf");
-                body.push_str(&format!("{}{} = bitcast ptr {} to ptr\n", ctx.indent_str(), gep_typed, gep));
-                body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), fv, gep_typed));
+                body.push_str(&format!(
+                    "{}{} = bitcast ptr {} to ptr\n",
+                    ctx.indent_str(),
+                    gep_typed,
+                    gep
+                ));
+                body.push_str(&format!(
+                    "{}store i64 {}, ptr {}\n",
+                    ctx.indent_str(),
+                    fv,
+                    gep_typed
+                ));
             }
             let int_tmp = ctx.gen_tmp("stint");
-            body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+            body.push_str(&format!(
+                "{}{} = ptrtoint ptr {} to i64\n",
+                ctx.indent_str(),
+                int_tmp,
+                tmp
+            ));
             int_tmp
         }
-        Expr::EFieldAccess { expr: fexpr, field, .. } => {
+        Expr::EFieldAccess {
+            expr: fexpr, field, ..
+        } => {
             if field.chars().all(|c| c.is_ascii_digit()) {
-                let is_tuple = if let Expr::EVar { name: vname, .. } = fexpr.as_ref() {
-                    matches!(ctx.var_types.get(vname), Some(Typ::TTuple { .. }))
-                } else {
-                    false
-                };
+                // Numeric access indexes a tuple (offset 0) or, in a choose/when
+                // destructure, an enum payload (offset 1, after the tag). Decide
+                // from the base expression's inferred type; fall back to tuple.
+                let is_enum_payload = infer_expr_type(fexpr, ctx).map_or(
+                    false,
+                    |t| matches!(&t, Typ::TStruct { name, .. } if ctx.enum_defs.contains_key(name)),
+                );
                 let val = gen_expr(fexpr, ctx, body);
                 let ptr_val = ctx.gen_tmp("fa_ptr");
-                body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, val));
-                let idx: i64 = field.parse::<i64>().unwrap_or(0) + if is_tuple { 0 } else { 1 };
+                body.push_str(&format!(
+                    "{}{} = inttoptr i64 {} to ptr\n",
+                    ctx.indent_str(),
+                    ptr_val,
+                    val
+                ));
+                let idx: i64 =
+                    field.parse::<i64>().unwrap_or(0) + if is_enum_payload { 1 } else { 0 };
                 let gep = ctx.gen_tmp("fa");
-                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr_val, idx));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    ptr_val,
+                    idx
+                ));
                 let load = ctx.gen_tmp("fal");
-                body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), load, gep));
+                body.push_str(&format!(
+                    "{}{} = load i64, ptr {}\n",
+                    ctx.indent_str(),
+                    load,
+                    gep
+                ));
+                if let Some(ft) = infer_field_type(fexpr, field, ctx) {
+                    if typ_is_string(&ft) {
+                        ctx.string_regs.insert(load.clone());
+                    }
+                }
                 return load;
-            } else if let Expr::EVar { name: enum_name, .. } = fexpr.as_ref() {
+            } else if let Expr::EVar {
+                name: enum_name, ..
+            } = fexpr.as_ref()
+            {
                 if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
                     let ctor_name = format!("{}_{}_unit", enum_name, field);
                     if !ctx.enum_defs.contains_key(enum_name) {
@@ -465,15 +877,23 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 // Compute field index based on the base expression's type if it's a known variable.
                 let field_idx = {
                     let mut idx = None;
-                    if let Expr::EVar { name: ref vname, .. } = **fexpr {
+                    if let Expr::EVar {
+                        name: ref vname, ..
+                    } = **fexpr
+                    {
                         if let Some(typ) = ctx.var_types.get(vname) {
                             match typ {
-                                Typ::TStruct { name: struct_name, .. } => {
-                                    if let Some(struct_map) = ctx.struct_field_map.get(struct_name) {
+                                Typ::TStruct {
+                                    name: struct_name, ..
+                                } => {
+                                    if let Some(struct_map) = ctx.struct_field_map.get(struct_name)
+                                    {
                                         idx = struct_map.get(field).copied();
                                     }
                                 }
-                                Typ::TShape { name: shape_name, .. } => {
+                                Typ::TShape {
+                                    name: shape_name, ..
+                                } => {
                                     if let Some(struct_map) = ctx.struct_field_map.get(shape_name) {
                                         idx = struct_map.get(field).copied();
                                     }
@@ -488,11 +908,27 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                     idx.unwrap_or(0)
                 };
                 let ptr_val = ctx.gen_tmp("fa_ptr");
-                body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, val));
+                body.push_str(&format!(
+                    "{}{} = inttoptr i64 {} to ptr\n",
+                    ctx.indent_str(),
+                    ptr_val,
+                    val
+                ));
                 let gep = ctx.gen_tmp("fa");
-                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr_val, field_idx));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    ptr_val,
+                    field_idx
+                ));
                 let load = ctx.gen_tmp("fal");
-                body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), load, gep));
+                body.push_str(&format!(
+                    "{}{} = load i64, ptr {}\n",
+                    ctx.indent_str(),
+                    load,
+                    gep
+                ));
                 if field_access_is_string(fexpr.as_ref(), field, ctx) {
                     ctx.string_regs.insert(load.clone());
                 }
@@ -501,16 +937,38 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 // Base expression is not a simple variable; use fallback field index.
                 let val = gen_expr(fexpr, ctx, body);
                 let ptr_val = ctx.gen_tmp("fa_ptr");
-                body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, val));
+                body.push_str(&format!(
+                    "{}{} = inttoptr i64 {} to ptr\n",
+                    ctx.indent_str(),
+                    ptr_val,
+                    val
+                ));
                 let field_idx = ctx.field_idx.get(field).copied().unwrap_or(0);
                 let gep = ctx.gen_tmp("fa");
-                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr_val, field_idx));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    ptr_val,
+                    field_idx
+                ));
                 let load = ctx.gen_tmp("fal");
-                body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), load, gep));
+                body.push_str(&format!(
+                    "{}{} = load i64, ptr {}\n",
+                    ctx.indent_str(),
+                    load,
+                    gep
+                ));
                 load
             }
         }
-        Expr::EChoose { loc, var, cases, otherwise, .. } => {
+        Expr::EChoose {
+            loc,
+            var,
+            cases,
+            otherwise,
+            ..
+        } => {
             // Translate `choose` into a nested if/else chain, reusing the
             // existing EIf codegen (phi merging, branch-terminator handling).
             // Each case becomes `if (var == when) then else <rest>`.
@@ -576,7 +1034,12 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                                     result: Some(Box::new(other.clone())),
                                 },
                             };
-                            Case { when, guard, bindings: lets, body }
+                            Case {
+                                when,
+                                guard,
+                                bindings: lets,
+                                body,
+                            }
                         }
                         _ => Case {
                             when: case.when.as_ref().clone(),
@@ -589,7 +1052,10 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 .collect();
             let mut chain: Expr = match otherwise {
                 Some(e) => *e.clone(),
-                None => Expr::EInt { loc: loc.clone(), value: 0 },
+                None => Expr::EInt {
+                    loc: loc.clone(),
+                    value: 0,
+                },
             };
             for c in transformed.iter().rev() {
                 // Bindings are emitted *before* the guard so the guard
@@ -645,29 +1111,76 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             let vals: Vec<String> = values.iter().map(|v| gen_expr(v, ctx, body)).collect();
             let tmp = ctx.gen_tmp("arr");
             let size = (values.len() + 1) * 8;
-            body.push_str(&format!("{}{} = call ptr @miva_alloc(i64 {})\n", ctx.indent_str(), tmp, size));
-            body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), values.len(), tmp));
+            body.push_str(&format!(
+                "{}{} = call ptr @miva_alloc(i64 {})\n",
+                ctx.indent_str(),
+                tmp,
+                size
+            ));
+            body.push_str(&format!(
+                "{}store i64 {}, ptr {}\n",
+                ctx.indent_str(),
+                values.len(),
+                tmp
+            ));
             for (i, v) in vals.iter().enumerate() {
                 let gep = ctx.gen_tmp("ae");
-                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, tmp, i + 1));
-                body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), v, gep));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    tmp,
+                    i + 1
+                ));
+                body.push_str(&format!(
+                    "{}store i64 {}, ptr {}\n",
+                    ctx.indent_str(),
+                    v,
+                    gep
+                ));
             }
             let int_tmp = ctx.gen_tmp("arri");
-            body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+            body.push_str(&format!(
+                "{}{} = ptrtoint ptr {} to i64\n",
+                ctx.indent_str(),
+                int_tmp,
+                tmp
+            ));
             int_tmp
         }
         Expr::ETupleLit { values, .. } => {
             let vals: Vec<String> = values.iter().map(|v| gen_expr(v, ctx, body)).collect();
             let tmp = ctx.gen_tmp("tp");
             let size = values.len() * 8;
-            body.push_str(&format!("{}{} = call ptr @miva_alloc(i64 {})\n", ctx.indent_str(), tmp, size));
+            body.push_str(&format!(
+                "{}{} = call ptr @miva_alloc(i64 {})\n",
+                ctx.indent_str(),
+                tmp,
+                size
+            ));
             for (i, v) in vals.iter().enumerate() {
                 let gep = ctx.gen_tmp("te");
-                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, tmp, i));
-                body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), v, gep));
+                body.push_str(&format!(
+                    "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                    ctx.indent_str(),
+                    gep,
+                    tmp,
+                    i
+                ));
+                body.push_str(&format!(
+                    "{}store i64 {}, ptr {}\n",
+                    ctx.indent_str(),
+                    v,
+                    gep
+                ));
             }
             let int_tmp = ctx.gen_tmp("tpi");
-            body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+            body.push_str(&format!(
+                "{}{} = ptrtoint ptr {} to i64\n",
+                ctx.indent_str(),
+                int_tmp,
+                tmp
+            ));
             int_tmp
         }
         Expr::EAddr { expr: aexpr, .. } => gen_expr(aexpr, ctx, body),
@@ -677,16 +1190,32 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             // back to a real pointer before dereferencing.
             let val = gen_expr(dexpr, ctx, body);
             let ptr_tmp = ctx.gen_tmp("deref_ptr");
-            body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_tmp, val));
+            body.push_str(&format!(
+                "{}{} = inttoptr i64 {} to ptr\n",
+                ctx.indent_str(),
+                ptr_tmp,
+                val
+            ));
             let tmp = ctx.gen_tmp("deref");
-            body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), tmp, ptr_tmp));
+            body.push_str(&format!(
+                "{}{} = load i64, ptr {}\n",
+                ctx.indent_str(),
+                tmp,
+                ptr_tmp
+            ));
             tmp
         }
         Expr::EMacro { .. } | Expr::EMacroVar { .. } => "0".to_string(),
         Expr::EEnumPattern { .. } => {
             unreachable!("EEnumPattern is handled inline in the EChoose arm")
         }
-        Expr::ELambda { params, ret, captures, body: lambda_body, .. } => {
+        Expr::ELambda {
+            params,
+            ret,
+            captures,
+            body: lambda_body,
+            ..
+        } => {
             // Lower a lambda to a closure value: a pointer to a heap struct
             // `{ i64 env, i64 fn }` where `env` points to the captured values
             // and `fn` is the thunk function pointer.
@@ -704,11 +1233,24 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             // Allocate the capture environment struct and store each capture.
             let env_size = (captures.len() as i64) * 8;
             let env_ptr = ctx.gen_tmp("cenv");
-            body.push_str(&format!("  {} = call ptr @miva_alloc(i64 {})\n", env_ptr, env_size));
+            body.push_str(&format!(
+                "  {} = call ptr @miva_alloc(i64 {})\n",
+                env_ptr, env_size
+            ));
             for (i, (cap_name, _)) in captures.iter().enumerate() {
-                let cap_val = gen_expr(&Expr::EVar { name: cap_name.clone(), loc: Loc { line: 0, col: 0 } }, ctx, body);
+                let cap_val = gen_expr(
+                    &Expr::EVar {
+                        name: cap_name.clone(),
+                        loc: Loc { line: 0, col: 0 },
+                    },
+                    ctx,
+                    body,
+                );
                 let gep = ctx.gen_tmp("cgep");
-                body.push_str(&format!("  {} = getelementptr i64, ptr {}, i64 {}\n", gep, env_ptr, i));
+                body.push_str(&format!(
+                    "  {} = getelementptr i64, ptr {}, i64 {}\n",
+                    gep, env_ptr, i
+                ));
                 body.push_str(&format!("  store i64 {}, ptr {}\n", cap_val, gep));
             }
 
@@ -716,21 +1258,232 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             let clo_ptr = ctx.gen_tmp("clo");
             body.push_str(&format!("  {} = call ptr @miva_alloc(i64 16)\n", clo_ptr));
             let fn_int = ctx.gen_tmp("fnint");
-            body.push_str(&format!("  {} = ptrtoint i64 (...) * @{} to i64\n", fn_int, thunk_name));
+            body.push_str(&format!(
+                "  {} = ptrtoint i64 (...) * @{} to i64\n",
+                fn_int, thunk_name
+            ));
             let env_int = ctx.gen_tmp("envint");
-            body.push_str(&format!("  {} = ptrtoint ptr {} to i64\n", env_int, env_ptr));
+            body.push_str(&format!(
+                "  {} = ptrtoint ptr {} to i64\n",
+                env_int, env_ptr
+            ));
             let clo_gep0 = ctx.gen_tmp("clogep0");
-            body.push_str(&format!("  {} = getelementptr i64, ptr {}, i64 0\n", clo_gep0, clo_ptr));
+            body.push_str(&format!(
+                "  {} = getelementptr i64, ptr {}, i64 0\n",
+                clo_gep0, clo_ptr
+            ));
             body.push_str(&format!("  store i64 {}, ptr {}\n", env_int, clo_gep0));
             let clo_gep1 = ctx.gen_tmp("clogep1");
-            body.push_str(&format!("  {} = getelementptr i64, ptr {}, i64 1\n", clo_gep1, clo_ptr));
+            body.push_str(&format!(
+                "  {} = getelementptr i64, ptr {}, i64 1\n",
+                clo_gep1, clo_ptr
+            ));
             body.push_str(&format!("  store i64 {}, ptr {}\n", fn_int, clo_gep1));
 
             let clo_int = ctx.gen_tmp("clo_int");
-            body.push_str(&format!("  {} = ptrtoint ptr {} to i64\n", clo_int, clo_ptr));
+            body.push_str(&format!(
+                "  {} = ptrtoint ptr {} to i64\n",
+                clo_int, clo_ptr
+            ));
             clo_int
         }
     }
+}
+
+/// Deep `==`/`!=` for tuple/struct values held in already-materialized
+/// registers `l`/`r`: compares each field (recursively) and ANDs the results.
+/// `want_eq` selects equality (true) or inequality (false).
+pub(crate) fn gen_deep_compare(
+    l: &str,
+    r: &str,
+    typ: &Typ,
+    want_eq: bool,
+    ctx: &mut LlvmCtx,
+    body: &mut String,
+) -> String {
+    let result = match typ {
+        Typ::TTuple { elems } => {
+            let mut results = Vec::with_capacity(elems.len());
+            for (i, et) in elems.iter().enumerate() {
+                let lf = load_field_reg(l, i as i64, ctx, body);
+                let rf = load_field_reg(r, i as i64, ctx, body);
+                results.push(gen_deep_compare(&lf, &rf, et, true, ctx, body));
+            }
+            let combined = combine_and(results, ctx, body);
+            if want_eq {
+                combined
+            } else {
+                not_reg(&combined, ctx, body)
+            }
+        }
+        Typ::TStruct { name, .. } if ctx.enum_defs.contains_key(name) => {
+            let lt = load_enum_tag(ctx, body, l);
+            let rt = load_enum_tag(ctx, body, r);
+            let tmp = ctx.gen_tmp("cmp");
+            body.push_str(&format!(
+                "{}{} = icmp eq i64 {}, {}\n",
+                ctx.indent_str(),
+                tmp,
+                lt,
+                rt
+            ));
+            let tmp2 = ctx.gen_tmp("cmpz");
+            body.push_str(&format!(
+                "{}{} = zext i1 {} to i64\n",
+                ctx.indent_str(),
+                tmp2,
+                tmp
+            ));
+            tmp2
+        }
+        Typ::TStruct { name, .. } => {
+            if let Some(fmap) = ctx.struct_field_types.get(name) {
+                let mut fields: Vec<(String, Typ)> =
+                    fmap.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                fields.sort_by_key(|(fname, _)| {
+                    ctx.struct_field_map
+                        .get(name)
+                        .and_then(|m| m.get(fname))
+                        .copied()
+                        .unwrap_or(0)
+                });
+                let mut results = Vec::with_capacity(fields.len());
+                for (fname, ftyp) in fields {
+                    let idx = ctx
+                        .struct_field_map
+                        .get(name)
+                        .and_then(|m| m.get(&fname))
+                        .copied()
+                        .unwrap_or(0) as i64;
+                    let lf = load_field_reg(l, idx, ctx, body);
+                    let rf = load_field_reg(r, idx, ctx, body);
+                    results.push(gen_deep_compare(&lf, &rf, &ftyp, true, ctx, body));
+                }
+                let combined = combine_and(results, ctx, body);
+                if want_eq {
+                    combined
+                } else {
+                    not_reg(&combined, ctx, body)
+                }
+            } else {
+                scalar_compare(l, r, want_eq, ctx, body)
+            }
+        }
+        Typ::TString => {
+            if let Ok(mut guard) = EXTERN_DECLS.lock() {
+                let decl = "declare i64 @miva_string_eq(ptr, ptr)";
+                guard
+                    .get_or_insert_with(HashSet::new)
+                    .insert(decl.to_string());
+            }
+            let pl = ctx.gen_tmp("seqp");
+            body.push_str(&format!(
+                "{}{} = inttoptr i64 {} to ptr\n",
+                ctx.indent_str(),
+                pl,
+                l
+            ));
+            let pr = ctx.gen_tmp("seqp");
+            body.push_str(&format!(
+                "{}{} = inttoptr i64 {} to ptr\n",
+                ctx.indent_str(),
+                pr,
+                r
+            ));
+            let tmp = ctx.gen_tmp("seq");
+            body.push_str(&format!(
+                "{}{} = call i64 @miva_string_eq(ptr {}, ptr {})\n",
+                ctx.indent_str(),
+                tmp,
+                pl,
+                pr
+            ));
+            if want_eq {
+                tmp
+            } else {
+                not_reg(&tmp, ctx, body)
+            }
+        }
+        _ => scalar_compare(l, r, want_eq, ctx, body),
+    };
+    result
+}
+
+fn load_field_reg(base_reg: &str, idx: i64, ctx: &mut LlvmCtx, body: &mut String) -> String {
+    let ptr = ctx.gen_tmp("dfp");
+    body.push_str(&format!(
+        "{}{} = inttoptr i64 {} to ptr\n",
+        ctx.indent_str(),
+        ptr,
+        base_reg
+    ));
+    let gep = ctx.gen_tmp("dfg");
+    body.push_str(&format!(
+        "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+        ctx.indent_str(),
+        gep,
+        ptr,
+        idx
+    ));
+    let load = ctx.gen_tmp("dfl");
+    body.push_str(&format!(
+        "{}{} = load i64, ptr {}\n",
+        ctx.indent_str(),
+        load,
+        gep
+    ));
+    load
+}
+
+fn scalar_compare(l: &str, r: &str, want_eq: bool, ctx: &mut LlvmCtx, body: &mut String) -> String {
+    let tmp = ctx.gen_tmp("cmp");
+    let pred = if want_eq { "eq" } else { "ne" };
+    body.push_str(&format!(
+        "{}{} = icmp {} i64 {}, {}\n",
+        ctx.indent_str(),
+        tmp,
+        pred,
+        l,
+        r
+    ));
+    let tmp2 = ctx.gen_tmp("cmpz");
+    body.push_str(&format!(
+        "{}{} = zext i1 {} to i64\n",
+        ctx.indent_str(),
+        tmp2,
+        tmp
+    ));
+    tmp2
+}
+
+fn not_reg(reg: &str, ctx: &mut LlvmCtx, body: &mut String) -> String {
+    let tmp = ctx.gen_tmp("not");
+    body.push_str(&format!(
+        "{}{} = xor i64 {}, 1\n",
+        ctx.indent_str(),
+        tmp,
+        reg
+    ));
+    tmp
+}
+
+fn combine_and(results: Vec<String>, ctx: &mut LlvmCtx, body: &mut String) -> String {
+    if results.is_empty() {
+        return "1".to_string();
+    }
+    let mut acc = results[0].clone();
+    for c in results.iter().skip(1) {
+        let tmp = ctx.gen_tmp("and");
+        body.push_str(&format!(
+            "{}{} = and i64 {}, {}\n",
+            ctx.indent_str(),
+            tmp,
+            acc,
+            c
+        ));
+        acc = tmp;
+    }
+    acc
 }
 
 /// Whether the i-th argument of a runtime function should be passed as `ptr`
@@ -744,9 +1497,13 @@ pub(crate) fn is_ptr_arg(func_name: &str, arg_idx: usize) -> bool {
         "@miva_string_make" => arg_idx == 0,
         // @miva_box_new_string takes ptr for both args (the box ptr and the string value)
         "@miva_box_new_string" => arg_idx == 0 || arg_idx == 1,
-        "@miva_box_new_int" | "@miva_box_new_float" | "@miva_box_new_bool"
+        "@miva_box_new_int"
+        | "@miva_box_new_float"
+        | "@miva_box_new_bool"
         | "@miva_box_new_byte" => arg_idx == 0,
-        "@miva_box_deref_int" | "@miva_box_deref_float" | "@miva_box_deref_bool"
+        "@miva_box_deref_int"
+        | "@miva_box_deref_float"
+        | "@miva_box_deref_bool"
         | "@miva_box_deref_byte" => false,
         "@miva_box_deref_string" => true,
         "@miva_range" | "@miva_range_end" | "@miva_range_step" => arg_idx == 0,
@@ -760,7 +1517,9 @@ pub(crate) fn is_ptr_arg(func_name: &str, arg_idx: usize) -> bool {
         "@miva_yaml_object_find" => arg_idx == 1,
         // Pointer-manipulation builtins (all take ptr as first arg)
         "@miva_realloc" | "@miva_free" | "@miva_ptr_offset" => arg_idx == 0,
-        "@miva_ptr_set_i64" | "@miva_ptr_set_double" | "@miva_ptr_set_i8" | "@miva_ptr_set_ptr" => arg_idx == 0,
+        "@miva_ptr_set_i64" | "@miva_ptr_set_double" | "@miva_ptr_set_i8" | "@miva_ptr_set_ptr" => {
+            arg_idx == 0
+        }
         "@miva_async_spawn" => arg_idx == 0,
         _ => false,
     }
@@ -768,46 +1527,101 @@ pub(crate) fn is_ptr_arg(func_name: &str, arg_idx: usize) -> bool {
 
 pub(crate) fn ret_type(func_name: &str) -> &'static str {
     match func_name {
-        n if n.contains("miva_print") || n.contains("miva_error") || n == "@miva_panic"
-            || n == "@miva_abort" || n == "@miva_exit" => "void",
-        n if n == "@miva_string_concat" || n == "@miva_string_make"
-            || n.starts_with("@miva_string_from_") || n == "@miva_alloc" || n == "@miva_realloc"
-            || n == "@miva_json_string" || n == "@miva_json_object_key"
-            || n == "@miva_json_stringify" => "ptr",
-        n if n == "@miva_xml_tag" || n == "@miva_xml_attr_name"
-            || n == "@miva_xml_attr_value" || n == "@miva_xml_attr_find"
-            || n == "@miva_xml_text" || n == "@miva_xml_comment"
-            || n == "@miva_xml_cdata" || n == "@miva_xml_pi_target"
-            || n == "@miva_xml_pi_data" || n == "@miva_xml_stringify" => "ptr",
-        n if n == "@miva_toml_string" || n == "@miva_toml_object_key"
-            || n == "@miva_toml_stringify" => "ptr",
-        n if n == "@miva_yaml_string" || n == "@miva_yaml_object_key"
-            || n == "@miva_yaml_stringify" => "ptr",
+        n if n.contains("miva_print")
+            || n.contains("miva_error")
+            || n == "@miva_panic"
+            || n == "@miva_abort"
+            || n == "@miva_exit" =>
+        {
+            "void"
+        }
+        n if n == "@miva_string_concat"
+            || n == "@miva_string_make"
+            || n.starts_with("@miva_string_from_")
+            || n == "@miva_alloc"
+            || n == "@miva_realloc"
+            || n == "@miva_json_string"
+            || n == "@miva_json_object_key"
+            || n == "@miva_json_stringify" =>
+        {
+            "ptr"
+        }
+        n if n == "@miva_xml_tag"
+            || n == "@miva_xml_attr_name"
+            || n == "@miva_xml_attr_value"
+            || n == "@miva_xml_attr_find"
+            || n == "@miva_xml_text"
+            || n == "@miva_xml_comment"
+            || n == "@miva_xml_cdata"
+            || n == "@miva_xml_pi_target"
+            || n == "@miva_xml_pi_data"
+            || n == "@miva_xml_stringify" =>
+        {
+            "ptr"
+        }
+        n if n == "@miva_toml_string"
+            || n == "@miva_toml_object_key"
+            || n == "@miva_toml_stringify" =>
+        {
+            "ptr"
+        }
+        n if n == "@miva_yaml_string"
+            || n == "@miva_yaml_object_key"
+            || n == "@miva_yaml_stringify" =>
+        {
+            "ptr"
+        }
         n if n == "@miva_box_deref_float" => "double",
         n if n == "@miva_box_deref_bool" || n == "@miva_box_deref_byte" => "i8",
         // Pointer-manipulation builtins
         "@miva_ptr_offset" => "ptr",
-        "@miva_free" | "@miva_ptr_set_i64" | "@miva_ptr_set_double" | "@miva_ptr_set_i8" | "@miva_ptr_set_ptr" => "void",
+        "@miva_free"
+        | "@miva_ptr_set_i64"
+        | "@miva_ptr_set_double"
+        | "@miva_ptr_set_i8"
+        | "@miva_ptr_set_ptr" => "void",
         n if n.starts_with("@miva_") || n.starts_with("@ffi_") => "i64",
         _ => "i64",
     }
 }
 
-pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut LlvmCtx, body: &mut String) -> String {
+pub(crate) fn gen_call(
+    name: &str,
+    args: &[Expr],
+    type_args: &[Typ],
+    ctx: &mut LlvmCtx,
+    body: &mut String,
+) -> String {
     let lookup = name.rsplit('.').next().unwrap_or(name);
     // Calling a closure-typed variable: load the closure struct, extract the
     // environment pointer and the thunk function pointer, then call the thunk
     // indirectly with `(env, args...)`.
     if let Some(Typ::TFunc { .. }) = ctx.var_types.get(lookup) {
-        let clo_int = gen_expr(&Expr::EVar { name: lookup.to_string(), loc: Loc { line: 0, col: 0 } }, ctx, body);
+        let clo_int = gen_expr(
+            &Expr::EVar {
+                name: lookup.to_string(),
+                loc: Loc { line: 0, col: 0 },
+            },
+            ctx,
+            body,
+        );
         let clo_ptr = ctx.gen_tmp("cloptr");
-        body.push_str(&format!("  {} = inttoptr i64 {} to ptr\n", clo_ptr, clo_int));
+        body.push_str(&format!(
+            "  {} = inttoptr i64 {} to ptr\n",
+            clo_ptr, clo_int
+        ));
         let env_gep = ctx.gen_tmp("cenvgep");
-        body.push_str(&format!("  {} = getelementptr i64, ptr {}, i64 0\n", env_gep, clo_ptr));
+        body.push_str(&format!(
+            "  {} = getelementptr i64, ptr {}, i64 0\n",
+            env_gep, clo_ptr
+        ));
         let env_val = ctx.gen_tmp("cenvval");
         body.push_str(&format!("  {} = load i64, ptr {}\n", env_val, env_gep));
         let fn_gep = ctx.gen_tmp("cngep");
-        body.push_str(&format!("  {} = getelementptr i64, ptr {}, i64 1\n", fn_gep, clo_ptr));
+        body.push_str(&format!(
+            "  {} = getelementptr i64, ptr {}, i64 1\n",
+            fn_gep, clo_ptr
+        ));
         let fn_int = ctx.gen_tmp("cnfn");
         body.push_str(&format!("  {} = load i64, ptr {}\n", fn_int, fn_gep));
         let fn_ptr = ctx.gen_tmp("cnfnptr");
@@ -819,7 +1633,12 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
             arg_strs.push(format!("i64 {}", t));
         }
         let tmp = ctx.gen_tmp("ccl");
-        body.push_str(&format!("  {} = call i64 {}({})\n", tmp, fn_ptr, arg_strs.join(", ")));
+        body.push_str(&format!(
+            "  {} = call i64 {}({})\n",
+            tmp,
+            fn_ptr,
+            arg_strs.join(", ")
+        ));
         return tmp;
     }
     // An enum constructor is `Enum.Variant` (exactly one dot, e.g. `Option.Some`).
@@ -889,14 +1708,17 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
             return tmp;
         }
     }
-        // string_from/to_string on already-string arg: skip conversion, pass through.
+    // string_from/to_string on already-string arg: skip conversion, pass through.
     // When the arg is NOT a string, still emit the conversion using the already
     // computed register — never re-evaluate args[0], which would double-evaluate
     // side-effecting expressions such as a second `await` on the same future.
     if (name == "string_from" || name == "to_string") && args.len() == 1 {
         let reg = gen_expr(&args[0], ctx, body);
-        let is_str = is_string_expr(&args[0]) || call_returns_string(&args[0], ctx)
-            || is_string_var(&args[0], ctx) || ctx.string_regs.contains(&reg);
+        let is_str = is_string_expr(&args[0])
+            || call_returns_string(&args[0], ctx)
+            || is_string_var(&args[0], ctx)
+            || ctx.string_regs.contains(&reg)
+            || matches!(infer_expr_type(&args[0], ctx), Some(Typ::TString));
         if is_str {
             return reg;
         }
@@ -909,22 +1731,44 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
                     reg
                 } else {
                     let bc = ctx.gen_tmp("bc");
-                    body.push_str(&format!("{}{} = bitcast i64 {} to double\n", ctx.indent_str(), bc, reg));
+                    body.push_str(&format!(
+                        "{}{} = bitcast i64 {} to double\n",
+                        ctx.indent_str(),
+                        bc,
+                        reg
+                    ));
                     bc
                 };
-                ("@miva_string_from_float".to_string(), format!("double {}", double_reg))
+                (
+                    "@miva_string_from_float".to_string(),
+                    format!("double {}", double_reg),
+                )
             }
             NumKind::Bool => {
                 let b = ctx.gen_tmp("bt");
-                body.push_str(&format!("{}{} = trunc i64 {} to i8\n", ctx.indent_str(), b, reg));
+                body.push_str(&format!(
+                    "{}{} = trunc i64 {} to i8\n",
+                    ctx.indent_str(),
+                    b,
+                    reg
+                ));
                 ("@miva_string_from_bool".to_string(), format!("i8 {}", b))
             }
             NumKind::Int => ("@miva_string_from_int".to_string(), format!("i64 {}", reg)),
         };
-        body.push_str(&format!("{} = call ptr {}({})\n",
-            format!("{}{}", ctx.indent_str(), tmp), fn_name, arg_llvm));
+        body.push_str(&format!(
+            "{} = call ptr {}({})\n",
+            format!("{}{}", ctx.indent_str(), tmp),
+            fn_name,
+            arg_llvm
+        ));
         let int_tmp = ctx.gen_tmp("cr");
-        body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+        body.push_str(&format!(
+            "{}{} = ptrtoint ptr {} to i64\n",
+            ctx.indent_str(),
+            int_tmp,
+            tmp
+        ));
         ctx.string_regs.insert(int_tmp.clone());
         return int_tmp;
     }
@@ -937,8 +1781,11 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
         };
         let arg_reg = gen_expr(arg, ctx, body);
         let tmp = ctx.gen_tmp("call");
-        body.push_str(&format!("{} = call i64 @miva_async_await(i64 {})\n",
-            format!("{}{}", ctx.indent_str(), tmp), arg_reg));
+        body.push_str(&format!(
+            "{} = call i64 @miva_async_await(i64 {})\n",
+            format!("{}{}", ctx.indent_str(), tmp),
+            arg_reg
+        ));
         // The awaited value is the future's inner type; mirror string-ness.
         if call_returns_string(arg, ctx) || is_string_expr(arg) || is_string_var(arg, ctx) {
             ctx.string_regs.insert(tmp.clone());
@@ -952,26 +1799,46 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
     let lookup = name.rsplit('.').next().unwrap_or(name);
     let is_async_call = ctx.func_sigs.get(lookup).map_or(false, |s| s.is_async);
     if is_async_call {
-        let arg_regs: Vec<String> = args.iter()
-            .map(|a| gen_expr(a, ctx, body))
-            .collect();
+        let arg_regs: Vec<String> = args.iter().map(|a| gen_expr(a, ctx, body)).collect();
         let struct_bytes = (arg_regs.len() as i64) * 8;
         let struct_ptr = ctx.gen_tmp("asp");
-        body.push_str(&format!("{}{} = call ptr @miva_alloc(i64 {})\n",
-            ctx.indent_str(), struct_ptr, struct_bytes));
+        body.push_str(&format!(
+            "{}{} = call ptr @miva_alloc(i64 {})\n",
+            ctx.indent_str(),
+            struct_ptr,
+            struct_bytes
+        ));
         for (i, reg) in arg_regs.iter().enumerate() {
             let gep = ctx.gen_tmp("asg");
-            body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n",
-                ctx.indent_str(), gep, struct_ptr, i));
-            body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), reg, gep));
+            body.push_str(&format!(
+                "{}{} = getelementptr i64, ptr {}, i64 {}\n",
+                ctx.indent_str(),
+                gep,
+                struct_ptr,
+                i
+            ));
+            body.push_str(&format!(
+                "{}store i64 {}, ptr {}\n",
+                ctx.indent_str(),
+                reg,
+                gep
+            ));
         }
         let struct_int = ctx.gen_tmp("asi");
-        body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n",
-            ctx.indent_str(), struct_int, struct_ptr));
+        body.push_str(&format!(
+            "{}{} = ptrtoint ptr {} to i64\n",
+            ctx.indent_str(),
+            struct_int,
+            struct_ptr
+        ));
         let func_name = map_builtin(name, ctx.current_module.as_deref());
         let handle = ctx.gen_tmp("call");
-        body.push_str(&format!("{} = call i64 @miva_async_spawn(ptr {}, i64 {})\n",
-            format!("{}{}", ctx.indent_str(), handle), func_name, struct_int));
+        body.push_str(&format!(
+            "{} = call i64 @miva_async_spawn(ptr {}, i64 {})\n",
+            format!("{}{}", ctx.indent_str(), handle),
+            func_name,
+            struct_int
+        ));
         // The handle is a plain i64; it is NOT a string. String-ness is applied
         // by the `await` that later joins this handle.
         return handle;
@@ -984,7 +1851,12 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
         let t = gen_expr(a, ctx, body);
         if is_ptr_arg(&func_name, i) {
             let ptr_val = ctx.gen_tmp("sp");
-            body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, t));
+            body.push_str(&format!(
+                "{}{} = inttoptr i64 {} to ptr\n",
+                ctx.indent_str(),
+                ptr_val,
+                t
+            ));
             arg_strs.push(format!("ptr {}", ptr_val));
         } else {
             arg_strs.push(format!("i64 {}", t));
@@ -1005,14 +1877,31 @@ pub(crate) fn gen_call(name: &str, args: &[Expr], type_args: &[Typ], ctx: &mut L
     }
     let ret_ty = ret_type(&func_name);
     if ret_ty == "void" {
-        body.push_str(&format!("{}call void {}({})\n", ctx.indent_str(), func_name, arg_strs.join(", ")));
+        body.push_str(&format!(
+            "{}call void {}({})\n",
+            ctx.indent_str(),
+            func_name,
+            arg_strs.join(", ")
+        ));
         "0".to_string()
     } else {
         let tmp = ctx.gen_tmp("call");
-        body.push_str(&format!("{}{} = call {} {}({})\n", ctx.indent_str(), tmp, ret_ty, func_name, arg_strs.join(", ")));
+        body.push_str(&format!(
+            "{}{} = call {} {}({})\n",
+            ctx.indent_str(),
+            tmp,
+            ret_ty,
+            func_name,
+            arg_strs.join(", ")
+        ));
         let result = if ret_ty == "ptr" {
             let int_tmp = ctx.gen_tmp("cr");
-            body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+            body.push_str(&format!(
+                "{}{} = ptrtoint ptr {} to i64\n",
+                ctx.indent_str(),
+                int_tmp,
+                tmp
+            ));
             // Mark ptr-to-i64 converted register as string
             ctx.string_regs.insert(int_tmp.clone());
             int_tmp
@@ -1063,9 +1952,15 @@ pub(crate) fn binding_is_string(expr: &Expr, ctx: &LlvmCtx) -> bool {
     if is_string_expr(expr) || call_returns_string(expr, ctx) {
         return true;
     }
+    if matches!(infer_expr_type(expr, ctx), Some(Typ::TString)) {
+        return true;
+    }
     // `v = scrutinee.field{i}` where `scrutinee` holds an enum value with a
     // string at payload index `i` (e.g. the `v` in `when (Box.Value(v))`).
-    if let Expr::EFieldAccess { expr: base, field, .. } = expr {
+    if let Expr::EFieldAccess {
+        expr: base, field, ..
+    } = expr
+    {
         if field.chars().all(|c| c.is_ascii_digit()) {
             if let Expr::EVar { name, .. } = base.as_ref() {
                 if let Some(idxs) = ctx.string_payloads.get(name) {
@@ -1100,7 +1995,11 @@ pub(crate) fn binding_is_string(expr: &Expr, ctx: &LlvmCtx) -> bool {
 /// which of its payload indices carry strings (for later destructuring).
 pub(crate) fn record_string_payloads(name: &str, expr: &Expr, ctx: &mut LlvmCtx) {
     let idxs = match expr {
-        Expr::ECall { name: cname, type_args, .. } => {
+        Expr::ECall {
+            name: cname,
+            type_args,
+            ..
+        } => {
             if let Some(dot) = cname.find('.') {
                 let (en, variant) = (&cname[..dot], &cname[dot + 1..]);
                 enum_ctor_string_payloads(en, variant, type_args, &ctx.enum_defs)
@@ -1132,4 +2031,3 @@ pub(crate) fn enum_ctor_enum_name(expr: &Expr) -> Option<String> {
         _ => None,
     }
 }
-

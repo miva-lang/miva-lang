@@ -2007,4 +2007,9 @@ inline mvp_builtin_string mvp_yaml_stringify(mvp_builtin_ptrany v) {
     return out;
 }
 
+inline mvp_builtin_int mvp_int(mvp_builtin_int v) { return v; }
+inline mvp_builtin_int mvp_as_int(mvp_builtin_int* p) { return *p; }
+inline mvp_builtin_string mvp_string(char* s) { return mvp_builtin_string(s); }
+inline char* mvp_as_string(mvp_builtin_string* s) { return const_cast<char*>(s->c_str()); }
+
 #endif // MVP_BUILTIN_H

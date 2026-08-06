@@ -14,47 +14,103 @@ pub fn emit_expr(expr: &IrExpr, depth: usize, expected_type: Option<&str>) -> St
         }
         IrExpr::Var(name) => mangle_cpp_kw(name),
         IrExpr::Move(name) => format!("std::move({})", mangle_cpp_kw(name)),
-        IrExpr::Clone(name) => format!("decltype({})({})", mangle_cpp_kw(name), mangle_cpp_kw(name)),
+        IrExpr::Clone(name) => {
+            format!("decltype({})({})", mangle_cpp_kw(name), mangle_cpp_kw(name))
+        }
         IrExpr::Void => "mvp_builtin_void".into(),
-        IrExpr::Call { name, type_args, args } => emit_call(name, type_args, args, depth, expected_type),
-        IrExpr::MethodCall { target, method, type_args, args } => {
+        IrExpr::Call {
+            name,
+            type_args,
+            args,
+        } => emit_call(name, type_args, args, depth, expected_type),
+        IrExpr::MethodCall {
+            target,
+            method,
+            type_args,
+            args,
+        } => {
             unreachable!("EMethodCall should not reach emitter")
         }
         IrExpr::BinOp { op, left, right } => emit_binop(op, left, right, depth, expected_type),
         IrExpr::FieldAccess { expr, field } => emit_field_access(expr, field, depth, expected_type),
-        IrExpr::StructInit { name, type_args, fields } => emit_struct_lit(name, type_args, fields, depth, expected_type),
+        IrExpr::StructInit {
+            name,
+            type_args,
+            fields,
+        } => emit_struct_lit(name, type_args, fields, depth, expected_type),
         IrExpr::ArrayInit(values) => {
-            let elems: Vec<_> = values.iter().map(|e| emit_expr(e, depth, expected_type)).collect();
+            let elems: Vec<_> = values
+                .iter()
+                .map(|e| emit_expr(e, depth, expected_type))
+                .collect();
             format!("std::vector{{{}}}", elems.join(", "))
         }
         IrExpr::TupleInit(values) => {
-            let elems: Vec<_> = values.iter().map(|e| emit_expr(e, depth, expected_type)).collect();
+            let elems: Vec<_> = values
+                .iter()
+                .map(|e| emit_expr(e, depth, expected_type))
+                .collect();
             format!("std::make_tuple({})", elems.join(", "))
         }
         IrExpr::Cast { expr, to } => {
-            let from_int = matches!(expr.as_ref(), IrExpr::Int { .. }) || matches!(expr.as_ref(), IrExpr::Var { .. });
+            let from_int = matches!(expr.as_ref(), IrExpr::Int { .. })
+                || matches!(expr.as_ref(), IrExpr::Var { .. });
             let is_ptr_cast = matches!(to, Typ::TPtrAny) || from_int && matches!(to, Typ::TPtrAny);
             if is_ptr_cast {
-                format!("reinterpret_cast<{}>({})", cxx_type(to), emit_expr(expr, depth, expected_type))
+                format!(
+                    "reinterpret_cast<{}>({})",
+                    cxx_type(to),
+                    emit_expr(expr, depth, expected_type)
+                )
             } else {
-                format!("static_cast<{}>({})", cxx_type(to), emit_expr(expr, depth, expected_type))
+                format!(
+                    "static_cast<{}>({})",
+                    cxx_type(to),
+                    emit_expr(expr, depth, expected_type)
+                )
             }
         }
         IrExpr::Addr(expr) => format!("&({})", emit_expr(expr, depth, expected_type)),
         IrExpr::Deref(expr) => format!("*({})", emit_expr(expr, depth, expected_type)),
-        IrExpr::IfValue { cond, then, else_, has_panic } => emit_if(cond, then, else_, *has_panic, depth, expected_type),
+        IrExpr::IfValue {
+            cond,
+            then,
+            else_,
+            has_panic,
+        } => emit_if(cond, then, else_, *has_panic, depth, expected_type),
         IrExpr::Block { stmts, result } => emit_block(stmts, result, depth, expected_type),
-        IrExpr::While { cond, body, result } => emit_while(cond, body, result, depth, expected_type),
+        IrExpr::While { cond, body, result } => {
+            emit_while(cond, body, result, depth, expected_type)
+        }
         IrExpr::Loop { body, result } => emit_loop(body, result, depth, expected_type),
-        IrExpr::For { var, range, body, result } => emit_for(var, range, body, result, depth, expected_type),
+        IrExpr::For {
+            var,
+            range,
+            body,
+            result,
+        } => emit_for(var, range, body, result, depth, expected_type),
         IrExpr::ClosureRef { id } => emit_closure_ref(*id),
-        IrExpr::Choose { var, cases, otherwise, has_panic } => emit_choose(var, cases, otherwise, *has_panic, depth, expected_type),
+        IrExpr::Choose {
+            var,
+            cases,
+            otherwise,
+            has_panic,
+        } => emit_choose(var, cases, otherwise, *has_panic, depth, expected_type),
         IrExpr::Macro { .. } => String::new(),
     }
 }
 
-pub(crate) fn emit_call(name: &str, type_args: &[Typ], args: &[IrExpr], depth: usize, expected_type: Option<&str>) -> String {
-    let args_strs: Vec<_> = args.iter().map(|a| emit_expr(a, depth, expected_type)).collect();
+pub(crate) fn emit_call(
+    name: &str,
+    type_args: &[Typ],
+    args: &[IrExpr],
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
+    let args_strs: Vec<_> = args
+        .iter()
+        .map(|a| emit_expr(a, depth, expected_type))
+        .collect();
     let type_arg_str = if type_args.is_empty() {
         String::new()
     } else {
@@ -65,14 +121,26 @@ pub(crate) fn emit_call(name: &str, type_args: &[Typ], args: &[IrExpr], depth: u
         let dot = name.find('.').unwrap();
         let enum_name = &name[..dot];
         let variant = &name[dot + 1..];
-        return format!("{}_{}{}({})", enum_name, variant, type_arg_str, args_strs.join(", "));
+        return format!(
+            "{}_{}{}({})",
+            enum_name,
+            variant,
+            type_arg_str,
+            args_strs.join(", ")
+        );
     } else if let Some(enum_name) = args.first().and_then(|a| match a {
         IrExpr::Var(n) => Some(n.as_str()),
         _ => None,
     }) {
         if enum_name.starts_with(|c: char| c.is_uppercase()) {
             let payload_strs = &args_strs[1..];
-            return format!("{}_{}{}({})", enum_name, name, type_arg_str, payload_strs.join(", "));
+            return format!(
+                "{}_{}{}({})",
+                enum_name,
+                name,
+                type_arg_str,
+                payload_strs.join(", ")
+            );
         }
     }
     format!(
@@ -83,7 +151,13 @@ pub(crate) fn emit_call(name: &str, type_args: &[Typ], args: &[IrExpr], depth: u
     )
 }
 
-pub(crate) fn emit_binop(op: &BinOp, left: &IrExpr, right: &IrExpr, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_binop(
+    op: &BinOp,
+    left: &IrExpr,
+    right: &IrExpr,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let op_str = match op {
         BinOp::Add => " + ",
         BinOp::Sub => " - ",
@@ -106,10 +180,19 @@ pub(crate) fn emit_binop(op: &BinOp, left: &IrExpr, right: &IrExpr, depth: usize
     )
 }
 
-pub(crate) fn emit_field_access(expr: &IrExpr, field: &str, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_field_access(
+    expr: &IrExpr,
+    field: &str,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     if field.chars().all(|c| c.is_ascii_digit()) {
         let idx: usize = field.parse().unwrap_or(0);
-        format!("std::get<{}>({})", idx, emit_expr(expr, depth, expected_type))
+        format!(
+            "std::get<{}>({})",
+            idx,
+            emit_expr(expr, depth, expected_type)
+        )
     } else if let IrExpr::Var(enum_name) = expr {
         if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
             format!("{}_{}()", enum_name, field)
@@ -121,7 +204,13 @@ pub(crate) fn emit_field_access(expr: &IrExpr, field: &str, depth: usize, expect
     }
 }
 
-pub(crate) fn emit_struct_lit(name: &str, type_args: &[Typ], fields: &[(String, IrExpr)], depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_struct_lit(
+    name: &str,
+    type_args: &[Typ],
+    fields: &[(String, IrExpr)],
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let type_name = if type_args.is_empty() {
         name.to_string()
     } else {
@@ -138,7 +227,14 @@ pub(crate) fn emit_struct_lit(name: &str, type_args: &[Typ], fields: &[(String, 
         let temp = "__temp";
         let inits: Vec<_> = fields
             .iter()
-            .map(|f| format!("{}.{} = {}", temp, f.0, emit_expr(&f.1, depth + 1, expected_type)))
+            .map(|f| {
+                format!(
+                    "{}.{} = {}",
+                    temp,
+                    f.0,
+                    emit_expr(&f.1, depth + 1, expected_type)
+                )
+            })
             .collect();
         format!(
             "([&]() {{ {} {}={{}}; {}; return {}; }}())",
@@ -150,7 +246,14 @@ pub(crate) fn emit_struct_lit(name: &str, type_args: &[Typ], fields: &[(String, 
     }
 }
 
-pub(crate) fn emit_if(cond: &IrExpr, then: &IrExpr, else_: &Option<Box<IrExpr>>, has_panic: bool, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_if(
+    cond: &IrExpr,
+    then: &IrExpr,
+    else_: &Option<Box<IrExpr>>,
+    has_panic: bool,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let cond_str = emit_expr(cond, depth, expected_type);
     let then_str = emit_expr(then, depth + 1, expected_type);
     let else_str = match else_ {
@@ -163,23 +266,43 @@ pub(crate) fn emit_if(cond: &IrExpr, then: &IrExpr, else_: &Option<Box<IrExpr>>,
     )
 }
 
-pub(crate) fn emit_block(stmts: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_block(
+    stmts: &[IrStmt],
+    result: &Option<Box<IrExpr>>,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let ind = indent_str(depth);
     let inner = depth + 1;
     let stmt_strs: String = stmts.iter().fold(String::new(), |acc, stmt| {
         format!("{}{}", acc, emit_stmt(stmt, inner))
     });
     let result_str = match result {
-        Some(expr) => format!("{}return {};\n", indent_str(inner), emit_expr(expr, inner, expected_type)),
+        Some(expr) => format!(
+            "{}return {};\n",
+            indent_str(inner),
+            emit_expr(expr, inner, expected_type)
+        ),
         None => String::new(),
     };
     format!("([&]() {{\n{}{}{}}})()", stmt_strs, result_str, ind)
 }
 
-pub(crate) fn emit_loop_body(body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>, result_prefix: &str) -> String {
+pub(crate) fn emit_loop_body(
+    body: &[IrStmt],
+    result: &Option<Box<IrExpr>>,
+    depth: usize,
+    expected_type: Option<&str>,
+    result_prefix: &str,
+) -> String {
     let stmt_strs: String = body.iter().map(|s| emit_stmt(s, depth + 1)).collect();
     let result_str = match result {
-        Some(e) => format!("{}{}{};\n", indent_str(depth + 1), result_prefix, emit_expr(e, depth + 1, expected_type)),
+        Some(e) => format!(
+            "{}{}{};\n",
+            indent_str(depth + 1),
+            result_prefix,
+            emit_expr(e, depth + 1, expected_type)
+        ),
         None => String::new(),
     };
     if stmt_strs.is_empty() && result_str.is_empty() {
@@ -189,7 +312,13 @@ pub(crate) fn emit_loop_body(body: &[IrStmt], result: &Option<Box<IrExpr>>, dept
     }
 }
 
-pub(crate) fn emit_while(cond: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_while(
+    cond: &IrExpr,
+    body: &[IrStmt],
+    result: &Option<Box<IrExpr>>,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let cond_str = emit_expr(cond, depth, expected_type);
     // A trailing expression runs each iteration for its effects; `return`
     // here would exit the wrapping lambda after the first iteration.
@@ -197,12 +326,24 @@ pub(crate) fn emit_while(cond: &IrExpr, body: &[IrStmt], result: &Option<Box<IrE
     format!("([&]() {{ while ({}) {{ {} ;}}}})()", cond_str, body_str)
 }
 
-pub(crate) fn emit_loop(body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_loop(
+    body: &[IrStmt],
+    result: &Option<Box<IrExpr>>,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let body_str = emit_loop_body(body, result, depth, expected_type, "return ");
     format!("([&]() {{ for (;;) {{ {} ;}}}})()", body_str)
 }
 
-pub(crate) fn emit_for(var: &str, range: &IrExpr, body: &[IrStmt], result: &Option<Box<IrExpr>>, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_for(
+    var: &str,
+    range: &IrExpr,
+    body: &[IrStmt],
+    result: &Option<Box<IrExpr>>,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let range_str = emit_expr(range, depth, expected_type);
     let body_str = emit_loop_body(body, result, depth, expected_type, "");
     format!(
@@ -220,7 +361,11 @@ pub(crate) fn emit_closure_ref(id: usize) -> String {
     });
     match closure {
         Some(cl) => {
-            let capture_exprs: Vec<_> = cl.env_fields.iter().map(|(n, _)| format!("{},", n)).collect();
+            let capture_exprs: Vec<_> = cl
+                .env_fields
+                .iter()
+                .map(|(n, _)| format!("{},", n))
+                .collect();
             let capture_init = if capture_exprs.is_empty() {
                 String::new()
             } else {
@@ -242,7 +387,14 @@ pub(crate) fn emit_closure_ref(id: usize) -> String {
     }
 }
 
-pub(crate) fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box<IrExpr>>, has_panic: bool, depth: usize, expected_type: Option<&str>) -> String {
+pub(crate) fn emit_choose(
+    var: &IrExpr,
+    cases: &[IrCase],
+    otherwise: &Option<Box<IrExpr>>,
+    has_panic: bool,
+    depth: usize,
+    expected_type: Option<&str>,
+) -> String {
     let var_str = emit_expr(var, depth, expected_type);
     let ind = indent_str(depth);
     let inner = depth + 1;
@@ -262,7 +414,11 @@ pub(crate) fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box
                     phantom_return(t)
                 )
             } else {
-                format!("{}{};", indent_str(inner), emit_expr(e, inner, expected_type))
+                format!(
+                    "{}{};",
+                    indent_str(inner),
+                    emit_expr(e, inner, expected_type)
+                )
             }
         } else {
             let inner_expr = emit_expr(e, inner, expected_type);
@@ -278,7 +434,11 @@ pub(crate) fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box
             None => String::new(),
         };
         let (tag_disc, binding_names, bind_enum, bind_variant) = match &c.pattern {
-            IrPattern::EnumTag { enum_name, variant, bindings } => (
+            IrPattern::EnumTag {
+                enum_name,
+                variant,
+                bindings,
+            } => (
                 format!("{}.__tag == {}_{}_tag()", var_str, enum_name, variant),
                 bindings.clone(),
                 enum_name.clone(),
@@ -321,17 +481,19 @@ pub(crate) fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box
                 None => {
                     format!(
                         "{}{}if ({}) {{\n{}{}\n{}}}\n",
-                        acc,
-                        ind,
-                        tag_disc,
-                        bind_str,
-                        body,
-                        ind
+                        acc, ind, tag_disc, bind_str, body, ind
                     )
                 }
             }
         } else {
-            let value_str = emit_expr(match &c.pattern { IrPattern::Value(e) => e, _ => unreachable!() }, depth, expected_type);
+            let value_str = emit_expr(
+                match &c.pattern {
+                    IrPattern::Value(e) => e,
+                    _ => unreachable!(),
+                },
+                depth,
+                expected_type,
+            );
             let body = branch_body(&c.then);
             format!(
                 "{}{}if (({} == {}){}) {{ {} }}\n",
@@ -370,9 +532,19 @@ pub(crate) fn emit_choose(var: &IrExpr, cases: &[IrCase], otherwise: &Option<Box
 pub fn emit_stmt(stmt: &IrStmt, depth: usize) -> String {
     let ind = indent_str(depth);
     match stmt {
-        IrStmt::Let { mutable, name, expr } => {
+        IrStmt::Let {
+            mutable,
+            name,
+            expr,
+        } => {
             let mut_str = if *mutable { "auto " } else { "const auto " };
-            format!("{}{}{} = {};\n", ind, mut_str, name, emit_expr(expr, depth, None))
+            format!(
+                "{}{}{} = {};\n",
+                ind,
+                mut_str,
+                name,
+                emit_expr(expr, depth, None)
+            )
         }
         IrStmt::LetTyped { name, typ, expr } => {
             format!(
@@ -392,7 +564,11 @@ pub fn emit_stmt(stmt: &IrStmt, depth: usize) -> String {
         IrStmt::Assign { name, expr } => {
             format!("{}{} = {};\n", ind, name, emit_expr(expr, depth, None))
         }
-        IrStmt::FieldAssign { target, field, expr } => {
+        IrStmt::FieldAssign {
+            target,
+            field,
+            expr,
+        } => {
             let target_str = emit_expr(target, depth, None);
             format!(
                 "{}const_cast<std::remove_const_t<std::remove_reference_t<decltype({})>>&>({}).{} = ({});\n",
@@ -411,7 +587,12 @@ pub fn emit_stmt(stmt: &IrStmt, depth: usize) -> String {
     }
 }
 
-pub(crate) fn emit_plain_if(cond: &IrExpr, then: &[IrStmt], else_: &[IrStmt], depth: usize) -> String {
+pub(crate) fn emit_plain_if(
+    cond: &IrExpr,
+    then: &[IrStmt],
+    else_: &[IrStmt],
+    depth: usize,
+) -> String {
     let ind = indent_str(depth);
     let inner = depth + 1;
     let cond_str = emit_expr(cond, depth, None);
@@ -445,19 +626,72 @@ pub(crate) fn emit_plain_for(var: &str, range: &IrExpr, body: &[IrStmt], depth: 
     let inner = depth + 1;
     let range_str = emit_expr(range, depth, None);
     let body_str: String = body.iter().map(|s| emit_stmt(s, inner)).collect();
-    format!("{}for (const auto& {} : {}) {{\n{}{}}}\n", ind, var, range_str, body_str, ind)
+    format!(
+        "{}for (const auto& {} : {}) {{\n{}{}}}\n",
+        ind, var, range_str, body_str, ind
+    )
 }
 
 pub fn emit_def(def: &IrDef, depth: usize) -> String {
     let ind = indent_str(depth);
     let inner = depth + 1;
     match def {
-        IrDef::Struct { name, type_params, fields } => emit_struct_def(name, type_params, fields, ind, inner),
-        IrDef::Enum { name, type_params, variants } => emit_enum_def(name, type_params, variants, ind, inner),
-        IrDef::Func { name, type_params, params, returns, body_stmts, body_result, .. } => emit_normal_func(name, type_params, params, returns, body_stmts, body_result, ind, inner),
-        IrDef::AsyncFunc { name, type_params, params, returns, body_stmts, body_result } => emit_async_func(name, type_params, params, returns, body_stmts, body_result, ind, inner),
-        IrDef::CFunc { name, params, returns, code } => emit_cfunc(name, params, returns, code, ind),
-        IrDef::Test { name, body_stmts, body_result } => emit_test(name, body_stmts, body_result, ind, inner),
+        IrDef::Struct {
+            name,
+            type_params,
+            fields,
+        } => emit_struct_def(name, type_params, fields, ind, inner),
+        IrDef::Enum {
+            name,
+            type_params,
+            variants,
+        } => emit_enum_def(name, type_params, variants, ind, inner),
+        IrDef::Func {
+            name,
+            type_params,
+            params,
+            returns,
+            body_stmts,
+            body_result,
+            ..
+        } => emit_normal_func(
+            name,
+            type_params,
+            params,
+            returns,
+            body_stmts,
+            body_result,
+            ind,
+            inner,
+        ),
+        IrDef::AsyncFunc {
+            name,
+            type_params,
+            params,
+            returns,
+            body_stmts,
+            body_result,
+        } => emit_async_func(
+            name,
+            type_params,
+            params,
+            returns,
+            body_stmts,
+            body_result,
+            ind,
+            inner,
+        ),
+        IrDef::CFunc {
+            name,
+            params,
+            returns,
+            code,
+        } => emit_cfunc(name, params, returns, code, ind),
+        IrDef::Test {
+            name,
+            body_stmts,
+            body_result,
+        } => emit_test(name, body_stmts, body_result, ind, inner),
         IrDef::Impl { struct_name, impls } => emit_impl(struct_name, impls, ind),
         IrDef::Module { name, defs } => emit_module(name, defs, ind, inner),
         IrDef::Export(symbol) => String::new(),
@@ -466,7 +700,13 @@ pub fn emit_def(def: &IrDef, depth: usize) -> String {
     }
 }
 
-pub(crate) fn emit_struct_def(name: &str, type_params: &[String], fields: &[FieldDef], ind: String, inner: usize) -> String {
+pub(crate) fn emit_struct_def(
+    name: &str,
+    type_params: &[String],
+    fields: &[FieldDef],
+    ind: String,
+    inner: usize,
+) -> String {
     let field_strs: String = fields
         .iter()
         .map(|f| format!("{}{} {};\n", indent_str(inner), cxx_type(&f.typ), f.name))
@@ -487,7 +727,13 @@ pub(crate) fn emit_struct_def(name: &str, type_params: &[String], fields: &[Fiel
     )
 }
 
-pub(crate) fn emit_enum_def(name: &str, type_params: &[String], variants: &[crate::ast::EnumVariant], ind: String, inner: usize) -> String {
+pub(crate) fn emit_enum_def(
+    name: &str,
+    type_params: &[String],
+    variants: &[crate::ast::EnumVariant],
+    ind: String,
+    inner: usize,
+) -> String {
     let template = if type_params.is_empty() {
         String::new()
     } else {
@@ -513,11 +759,7 @@ pub(crate) fn emit_enum_def(name: &str, type_params: &[String], variants: &[crat
             .map(|(i, t)| format!("{} field{};", cxx_type(t), i))
             .collect();
         if Some(v_idx) == first_payload_idx {
-            payload_members.push_str(&format!(
-                "{}{}\n",
-                indent_str(inner + 1),
-                fields.join(" ")
-            ));
+            payload_members.push_str(&format!("{}{}\n", indent_str(inner + 1), fields.join(" ")));
         } else {
             payload_members.push_str(&format!(
                 "{}struct {{ {} }} {};\n",
@@ -588,7 +830,17 @@ pub(crate) fn emit_enum_def(name: &str, type_params: &[String], variants: &[crat
         }
         let disc = format!(
             "{}{}inline {} {}_{}() {{\n{} {} v;\n{} v.__tag = {};\n{} return v;\n{}}}\n\n",
-            template, ind, ret_ty, name, v.name, indent_str(inner), ret_ty, indent_str(inner), idx, indent_str(inner), ind
+            template,
+            ind,
+            ret_ty,
+            name,
+            v.name,
+            indent_str(inner),
+            ret_ty,
+            indent_str(inner),
+            idx,
+            indent_str(inner),
+            ind
         );
         ctors.push_str(&disc);
     }
@@ -602,14 +854,60 @@ pub(crate) fn emit_enum_def(name: &str, type_params: &[String], variants: &[crat
     struct_str + &ctors + &tag_fns
 }
 
-pub(crate) fn emit_cfunc(name: &str, params: &[Param], returns: &Option<Typ>, code: &str, ind: String) -> String {
+pub(crate) fn emit_cfunc(
+    name: &str,
+    params: &[Param],
+    returns: &Option<Typ>,
+    code: &str,
+    ind: String,
+) -> String {
     let param_strs: Vec<_> = params.iter().map(cxx_param).collect();
     let ret_type = returns.as_ref().map_or("mvp_builtin_unit".into(), cxx_type);
-    let signature = format!("{} {}({})", ret_type, mangle_cpp_kw(name), param_strs.join(", "));
-    format!("{} {} {{\n{}{}}}\n\n", ind, signature, code, ind)
+    let signature = format!(
+        "{} {}({})",
+        ret_type,
+        mangle_cpp_kw(name),
+        param_strs.join(", ")
+    );
+    let args_decl = if params.is_empty() {
+        String::new()
+    } else {
+        let arg_types: Vec<_> = params
+            .iter()
+            .map(|p| match p {
+                Param::PRef { typ, .. } | Param::POwn { typ, .. } => cxx_type(typ),
+            })
+            .collect();
+        let arg_names: Vec<_> = params
+            .iter()
+            .map(|p| match p {
+                Param::PRef { name, .. } | Param::POwn { name, .. } => mangle_cpp_kw(name),
+            })
+            .collect();
+        format!(
+            "{}{} {}[] = {{ {} }};\n",
+            ind,
+            arg_types.join(", "),
+            "args",
+            arg_names.join(", ")
+        )
+    };
+    format!(
+        "{} {} {{\n{}{}{}}}\n\n",
+        ind, signature, args_decl, code, ind
+    )
 }
 
-pub(crate) fn emit_normal_func(name: &str, type_params: &[String], params: &[Param], returns: &Option<Typ>, body_stmts: &[IrStmt], body_result: &Option<IrExpr>, ind: String, _inner: usize) -> String {
+pub(crate) fn emit_normal_func(
+    name: &str,
+    type_params: &[String],
+    params: &[Param],
+    returns: &Option<Typ>,
+    body_stmts: &[IrStmt],
+    body_result: &Option<IrExpr>,
+    ind: String,
+    _inner: usize,
+) -> String {
     let param_strs: Vec<_> = params.iter().map(cxx_param).collect();
     let ret_type = returns.as_ref().map_or("mvp_builtin_unit".into(), cxx_type);
 
@@ -634,8 +932,17 @@ pub(crate) fn emit_normal_func(name: &str, type_params: &[String], params: &[Par
         combined
     };
 
-    let signature = format!("{} {}({})", ret_type, mangle_cpp_kw(name), param_strs.join(", "));
-    let inline_prefix = if all_tparams.is_empty() { "inline " } else { "" };
+    let signature = format!(
+        "{} {}({})",
+        ret_type,
+        mangle_cpp_kw(name),
+        param_strs.join(", ")
+    );
+    let inline_prefix = if all_tparams.is_empty() {
+        "inline "
+    } else {
+        ""
+    };
     let template_header = if all_tparams.is_empty() {
         String::new()
     } else {
@@ -669,7 +976,10 @@ pub(crate) fn emit_normal_func(name: &str, type_params: &[String], params: &[Par
         let stmt_strs: String = body_stmts.iter().map(|s| emit_stmt(s, 1)).collect();
         let has_return = body_stmts.iter().any(|s| matches!(s, IrStmt::Return(_)));
         let ret_line = match body_result {
-            Some(expr) => format!("  return {};\n", emit_expr(expr, 1, Some(ret_type.as_str()))),
+            Some(expr) => format!(
+                "  return {};\n",
+                emit_expr(expr, 1, Some(ret_type.as_str()))
+            ),
             None if !has_return => format!("  return {}();\n", ret_type),
             None => String::new(),
         };
@@ -685,7 +995,16 @@ pub(crate) fn emit_normal_func(name: &str, type_params: &[String], params: &[Par
     format!("{}{}", template_header, body_str)
 }
 
-pub(crate) fn emit_async_func(name: &str, type_params: &[String], params: &[Param], returns: &Option<Typ>, body_stmts: &[IrStmt], body_result: &Option<IrExpr>, ind: String, inner: usize) -> String {
+pub(crate) fn emit_async_func(
+    name: &str,
+    type_params: &[String],
+    params: &[Param],
+    returns: &Option<Typ>,
+    body_stmts: &[IrStmt],
+    body_result: &Option<IrExpr>,
+    ind: String,
+    inner: usize,
+) -> String {
     let ret_type = returns
         .as_ref()
         .map_or_else(|| "mvp_future<mvp_builtin_unit>".to_string(), cxx_type);
@@ -695,7 +1014,12 @@ pub(crate) fn emit_async_func(name: &str, type_params: &[String], params: &[Para
     };
     let inner_ret = cxx_type(&inner_typ);
     let param_strs: Vec<_> = params.iter().map(cxx_param).collect();
-    let signature = format!("{} {}({})", ret_type, mangle_cpp_kw(name), param_strs.join(", "));
+    let signature = format!(
+        "{} {}({})",
+        ret_type,
+        mangle_cpp_kw(name),
+        param_strs.join(", ")
+    );
     let template_header = if type_params.is_empty() {
         String::new()
     } else {
@@ -719,7 +1043,11 @@ pub(crate) fn emit_async_func(name: &str, type_params: &[String], params: &[Para
     };
     let stmt_strs: String = body_stmts.iter().map(|s| emit_stmt(s, inner + 1)).collect();
     let result_str = match body_result {
-        Some(expr) => format!("{}return {};\n", indent_str(inner + 1), emit_expr(expr, inner + 1, Some(&inner_ret))),
+        Some(expr) => format!(
+            "{}return {};\n",
+            indent_str(inner + 1),
+            emit_expr(expr, inner + 1, Some(&inner_ret))
+        ),
         None => String::new(),
     };
     let lambda = format!(
@@ -736,11 +1064,21 @@ pub(crate) fn emit_async_func(name: &str, type_params: &[String], params: &[Para
     )
 }
 
-pub(crate) fn emit_test(name: &str, body_stmts: &[IrStmt], body_result: &Option<IrExpr>, ind: String, inner: usize) -> String {
+pub(crate) fn emit_test(
+    name: &str,
+    body_stmts: &[IrStmt],
+    body_result: &Option<IrExpr>,
+    ind: String,
+    inner: usize,
+) -> String {
     let signature = format!("mvp_builtin_int {}", name);
     let stmt_strs: String = body_stmts.iter().map(|s| emit_stmt(s, inner)).collect();
     let ret_line = match body_result {
-        Some(expr) => format!("{}return {};\n", indent_str(inner), emit_expr(expr, inner, Some("mvp_builtin_int"))),
+        Some(expr) => format!(
+            "{}return {};\n",
+            indent_str(inner),
+            emit_expr(expr, inner, Some("mvp_builtin_int"))
+        ),
         None => format!("{}return mvp_builtin_void;\n", indent_str(inner)),
     };
     format!(
@@ -758,7 +1096,9 @@ pub(crate) fn emit_impl(struct_name: &str, impls: &[ImplExpr], ind: String) -> S
             continue;
         }
         let ret_typ = match op {
-            ImplOp::ImAdd | ImplOp::ImSub | ImplOp::ImMul | ImplOp::ImDiv => struct_name.to_string(),
+            ImplOp::ImAdd | ImplOp::ImSub | ImplOp::ImMul | ImplOp::ImDiv => {
+                struct_name.to_string()
+            }
             ImplOp::ImEq | ImplOp::ImNeq => "mvp_builtin_boolean".to_string(),
             ImplOp::ImDrop => unreachable!(),
         };
@@ -805,7 +1145,11 @@ pub(crate) fn generate_with_scope(defs: &[IrDef], module: Option<&str>) -> Scope
 
     for (i, def) in defs.iter().enumerate() {
         match def {
-            IrDef::Module { name, defs: inner_defs, .. } => {
+            IrDef::Module {
+                name,
+                defs: inner_defs,
+                ..
+            } => {
                 let parts = module_parts(name);
                 let ns_start: String = parts
                     .iter()
@@ -820,7 +1164,12 @@ pub(crate) fn generate_with_scope(defs: &[IrDef], module: Option<&str>) -> Scope
                 main_functions.push_str(&inner.main_functions);
                 break;
             }
-            IrDef::Func { name, body_stmts, body_result, .. } if name == "main" => {
+            IrDef::Func {
+                name,
+                body_stmts,
+                body_result,
+                ..
+            } if name == "main" => {
                 let mvp_main_str = emit_main_func(body_stmts, body_result);
                 defs_str.push_str(&mvp_main_str);
                 let global_main = if let Some(name) = module {
@@ -856,7 +1205,10 @@ pub(crate) fn emit_main_func(body_stmts: &[IrStmt], body_result: &Option<IrExpr>
         .collect::<Vec<_>>()
         .join("");
     let ret_line = match body_result {
-        Some(expr) => format!("  {};\n  return mvp_builtin_void;\n", emit_expr(expr, 1, None)),
+        Some(expr) => format!(
+            "  {};\n  return mvp_builtin_void;\n",
+            emit_expr(expr, 1, None)
+        ),
         None => "  return mvp_builtin_void;\n".into(),
     };
     let mut out = String::new();
@@ -905,7 +1257,10 @@ pub(crate) fn defs_to_ast(defs: &[IrDef]) -> Vec<Def> {
 
 pub(crate) fn ir_def_to_ast_rec(def: &IrDef) -> Vec<Def> {
     match def {
-        IrDef::Module { name, defs: inner_defs } => {
+        IrDef::Module {
+            name,
+            defs: inner_defs,
+        } => {
             let mut result = vec![Def::DModule {
                 loc: Loc { line: 1, col: 1 },
                 name: name.clone(),
@@ -921,73 +1276,92 @@ pub(crate) fn ir_def_to_ast_rec(def: &IrDef) -> Vec<Def> {
 
 pub(crate) fn ir_def_to_ast(def: &IrDef) -> Def {
     match def {
-        IrDef::Struct { name, fields, type_params, .. } => {
-            Def::DStruct {
+        IrDef::Struct {
+            name,
+            fields,
+            type_params,
+            ..
+        } => Def::DStruct {
+            loc: Loc { line: 1, col: 1 },
+            name: name.clone(),
+            fields: fields.clone(),
+            type_params: type_params.clone(),
+        },
+        IrDef::Enum {
+            name,
+            variants,
+            type_params,
+            ..
+        } => Def::DEnum {
+            loc: Loc { line: 1, col: 1 },
+            name: name.clone(),
+            variants: variants.clone(),
+            type_params: type_params.clone(),
+        },
+        IrDef::Func {
+            name,
+            type_params,
+            params,
+            returns,
+            ..
+        } => Def::DFunc {
+            loc: Loc { line: 1, col: 1 },
+            name: name.clone(),
+            type_params: type_params.clone(),
+            params: params.clone(),
+            returns: returns.clone(),
+            body: Box::new(Expr::EVoid {
                 loc: Loc { line: 1, col: 1 },
-                name: name.clone(),
-                fields: fields.clone(),
-                type_params: type_params.clone(),
-            }
-        }
-        IrDef::Enum { name, variants, type_params, .. } => {
-            Def::DEnum {
+            }),
+            safety: Safety::Safe,
+            is_async: false,
+            type_bounds: vec![],
+        },
+        IrDef::AsyncFunc {
+            name,
+            type_params,
+            params,
+            returns,
+            ..
+        } => Def::DFunc {
+            loc: Loc { line: 1, col: 1 },
+            name: name.clone(),
+            type_params: type_params.clone(),
+            params: params.clone(),
+            returns: returns.clone(),
+            body: Box::new(Expr::EVoid {
                 loc: Loc { line: 1, col: 1 },
-                name: name.clone(),
-                variants: variants.clone(),
-                type_params: type_params.clone(),
-            }
-        }
-        IrDef::Func { name, type_params, params, returns, .. } => {
-            Def::DFunc {
+            }),
+            safety: Safety::Safe,
+            is_async: true,
+            type_bounds: vec![],
+        },
+        IrDef::CFunc {
+            name,
+            params,
+            returns,
+            ..
+        } => Def::DCFuncUnsafe {
+            loc: Loc { line: 1, col: 1 },
+            name: name.clone(),
+            params: params.clone(),
+            returns: returns.clone(),
+            code: String::new(),
+            safety: Safety::Unsafe,
+            used_c_keyword: false,
+        },
+        IrDef::Test { name, .. } => Def::DTest {
+            loc: Loc { line: 1, col: 1 },
+            name: name.clone(),
+            body: Box::new(Expr::EVoid {
                 loc: Loc { line: 1, col: 1 },
-                name: name.clone(),
-                type_params: type_params.clone(),
-                params: params.clone(),
-                returns: returns.clone(),
-                body: Box::new(Expr::EVoid { loc: Loc { line: 1, col: 1 } }),
-                safety: Safety::Safe,
-                is_async: false,
-                type_bounds: vec![],
-            }
-        }
-        IrDef::AsyncFunc { name, type_params, params, returns, .. } => {
-            Def::DFunc {
-                loc: Loc { line: 1, col: 1 },
-                name: name.clone(),
-                type_params: type_params.clone(),
-                params: params.clone(),
-                returns: returns.clone(),
-                body: Box::new(Expr::EVoid { loc: Loc { line: 1, col: 1 } }),
-                safety: Safety::Safe,
-                is_async: true,
-                type_bounds: vec![],
-            }
-        }
-        IrDef::CFunc { name, params, returns, .. } => {
-            Def::DCFuncUnsafe {
-                loc: Loc { line: 1, col: 1 },
-                name: name.clone(),
-                params: params.clone(),
-                returns: returns.clone(),
-                code: String::new(),
-                safety: Safety::Unsafe,
-                used_c_keyword: false,
-            }
-        }
-        IrDef::Test { name, .. } => {
-            Def::DTest {
-                loc: Loc { line: 1, col: 1 },
-                name: name.clone(),
-                body: Box::new(Expr::EVoid { loc: Loc { line: 1, col: 1 } }),
-            }
-        }
-        IrDef::Impl { struct_name, impls } => {
-            Def::DImpl {
-                loc: Loc { line: 1, col: 1 },
-                struct_name: struct_name.clone(),
-                impls: impls.clone(),
-            }
-        }
+            }),
+        },
+        IrDef::Impl { struct_name, impls } => Def::DImpl {
+            loc: Loc { line: 1, col: 1 },
+            struct_name: struct_name.clone(),
+            impls: impls.clone(),
+        },
         IrDef::Module { name, .. } => Def::DModule {
             loc: Loc { line: 1, col: 1 },
             name: name.clone(),
@@ -1022,9 +1396,27 @@ pub(crate) fn ir_def_to_ast(def: &IrDef) -> Def {
 
 pub(crate) fn find_and_emit_func(defs: &[IrDef], name: &str) -> String {
     for d in defs {
-        if let IrDef::Func { name: n, type_params, params, returns, body_stmts, body_result, .. } = d {
+        if let IrDef::Func {
+            name: n,
+            type_params,
+            params,
+            returns,
+            body_stmts,
+            body_result,
+            ..
+        } = d
+        {
             if n == name {
-                return emit_normal_func(name, type_params, params, returns, body_stmts, body_result, String::new(), 1);
+                return emit_normal_func(
+                    name,
+                    type_params,
+                    params,
+                    returns,
+                    body_stmts,
+                    body_result,
+                    String::new(),
+                    1,
+                );
             }
         }
     }
@@ -1035,7 +1427,9 @@ pub(crate) fn collect_exported_names(defs: &[IrDef]) -> std::collections::HashSe
     let mut names = std::collections::HashSet::new();
     for def in defs.iter() {
         match def {
-            IrDef::Module { defs: inner_defs, .. } => {
+            IrDef::Module {
+                defs: inner_defs, ..
+            } => {
                 names.extend(collect_exported_names(inner_defs));
             }
             IrDef::Export(symbol) => {
@@ -1047,12 +1441,20 @@ pub(crate) fn collect_exported_names(defs: &[IrDef]) -> std::collections::HashSe
     names
 }
 
-pub(crate) fn collect_exported_rec(defs: &[IrDef], sym: &SymbolTable, current_modules: &[String], result: &mut String) {
+pub(crate) fn collect_exported_rec(
+    defs: &[IrDef],
+    sym: &SymbolTable,
+    current_modules: &[String],
+    result: &mut String,
+) {
     let exported = collect_exported_names(defs);
     // First pass: emit struct and enum definitions
     for def in defs.iter() {
         match def {
-            IrDef::Module { name, defs: inner_defs } => {
+            IrDef::Module {
+                name,
+                defs: inner_defs,
+            } => {
                 let mut new_modules = current_modules.to_vec();
                 new_modules.push(name.clone());
                 let parts = module_parts(name);
@@ -1093,13 +1495,21 @@ pub(crate) fn collect_exported_rec(defs: &[IrDef], sym: &SymbolTable, current_mo
                 };
                 result.push_str(&decl);
             }
-            IrDef::Enum { name, type_params, variants } => {
+            IrDef::Enum {
+                name,
+                type_params,
+                variants,
+            } => {
                 if !exported.contains(name.as_str()) {
                     let decl = emit_enum_def(name, type_params, variants, String::new(), 0);
                     result.push_str(&decl);
                 }
             }
-            IrDef::Struct { name, type_params, fields } => {
+            IrDef::Struct {
+                name,
+                type_params,
+                fields,
+            } => {
                 if !exported.contains(name.as_str()) {
                     let field_strs: String = fields
                         .iter()
@@ -1129,7 +1539,15 @@ pub(crate) fn collect_exported_rec(defs: &[IrDef], sym: &SymbolTable, current_mo
     // Second pass: emit function definitions
     for def in defs.iter() {
         match def {
-            IrDef::Func { name, type_params, params, returns, body_stmts, body_result, .. } => {
+            IrDef::Func {
+                name,
+                type_params,
+                params,
+                returns,
+                body_stmts,
+                body_result,
+                ..
+            } => {
                 if exported.contains(name.as_str()) {
                     let decl = find_and_emit_func(defs, name);
                     result.push_str(&decl);
@@ -1156,7 +1574,15 @@ pub(crate) fn collect_exported_rec(defs: &[IrDef], sym: &SymbolTable, current_mo
                     }
                 }
             }
-            IrDef::AsyncFunc { name, type_params, params, returns, body_stmts, body_result, .. } => {
+            IrDef::AsyncFunc {
+                name,
+                type_params,
+                params,
+                returns,
+                body_stmts,
+                body_result,
+                ..
+            } => {
                 if exported.contains(name.as_str()) {
                     let decl = find_and_emit_func(defs, name);
                     result.push_str(&decl);
@@ -1211,20 +1637,25 @@ using namespace std;
     let mut test_names: Vec<String> = Vec::new();
 
     for def in defs {
-        if let IrDef::Test { name, body_stmts, body_result } = def {
+        if let IrDef::Test {
+            name,
+            body_stmts,
+            body_result,
+        } = def
+        {
             test_names.push(name.clone());
             let signature = format!("mvp_builtin_int {}", name);
             let stmt_strs: String = body_stmts.iter().map(|s| emit_stmt(s, 1)).collect();
             let ret_line = match body_result {
-                Some(expr) => format!("  return {};\n", emit_expr(expr, 1, Some("mvp_builtin_int"))),
+                Some(expr) => format!(
+                    "  return {};\n",
+                    emit_expr(expr, 1, Some("mvp_builtin_int"))
+                ),
                 None => "  return mvp_builtin_void;\n".into(),
             };
             body.push_str(&format!(
                 "{} {{\n{}{}{}}}\n\n",
-                signature,
-                stmt_strs,
-                ret_line,
-                ""
+                signature, stmt_strs, ret_line, ""
             ));
         }
     }
@@ -1245,4 +1676,3 @@ using namespace std;
 }
 
 // ===== ENTRY POINT =====
-

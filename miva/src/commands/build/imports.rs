@@ -28,7 +28,14 @@ pub(crate) fn collect_imports_with_graph(
             _ if deps.contains_key(&first.to_string()) => {
                 let version = &deps[&first.to_string()];
                 let inc = format!("{}", env::get_std_include_dir().display());
-                file = inc + "/" + first + "-" + version + "/src/" + file_parts.join("/").as_str() + ".miva";
+                file = inc
+                    + "/"
+                    + first
+                    + "-"
+                    + version
+                    + "/src/"
+                    + file_parts.join("/").as_str()
+                    + ".miva";
             }
             _ => {
                 if !deps.is_empty() {
@@ -69,7 +76,9 @@ pub(crate) fn collect_imports_with_graph(
 
     for path in &import_paths {
         graph.add_dependency(file, path);
-        collect_imports_with_graph(ast_cache, path, visited, cache_dir, std_path, graph, name, deps)?;
+        collect_imports_with_graph(
+            ast_cache, path, visited, cache_dir, std_path, graph, name, deps,
+        )?;
     }
 
     Ok(())
@@ -81,7 +90,10 @@ pub(crate) fn collect_imports_with_graph(
 /// definitions into a shared `MacroTable`. This is called once before
 /// per-file compilation so that every file's macro expansion has access
 /// to macros defined anywhere in the project.
-pub(crate) fn collect_all_macros(ast_cache: &mut AstCache, files: &[String]) -> macro_expand::MacroTable {
+pub(crate) fn collect_all_macros(
+    ast_cache: &mut AstCache,
+    files: &[String],
+) -> macro_expand::MacroTable {
     let mut table = macro_expand::MacroTable::new();
     for file in files {
         match parse_cached(ast_cache, file) {

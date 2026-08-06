@@ -12,7 +12,11 @@ pub struct ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.line > 0 {
-            write!(f, "{}:{}:{}: {}", self.file, self.line, self.col, self.message)
+            write!(
+                f,
+                "{}:{}:{}: {}",
+                self.file, self.line, self.col, self.message
+            )
         } else {
             write!(f, "{}: {}", self.file, self.message)
         }

@@ -891,8 +891,14 @@ mod tests {
             loc: loc(),
             name: "Color".into(),
             variants: vec![
-                crate::ast::EnumVariant { name: "Red".into(), payload: vec![] },
-                crate::ast::EnumVariant { name: "Green".into(), payload: vec![crate::ast::Typ::TInt] },
+                crate::ast::EnumVariant {
+                    name: "Red".into(),
+                    payload: vec![],
+                },
+                crate::ast::EnumVariant {
+                    name: "Green".into(),
+                    payload: vec![crate::ast::Typ::TInt],
+                },
             ],
             type_params: vec![],
         };

@@ -18,7 +18,10 @@ pub fn exec(_verbose: bool) -> Result<()> {
         for (name, version) in &resolved {
             eprintln!("  {} {} ({})", color::info("✓"), name, version);
         }
-        eprintln!("{}", color::success("dependencies resolved — lock file written"));
+        eprintln!(
+            "{}",
+            color::success("dependencies resolved — lock file written")
+        );
     }
 
     let deps = if declared.is_empty() {
@@ -87,13 +90,7 @@ fn resolve_path(
         format!("src/{}.miva", rest)
     } else if deps.contains_key(first) {
         let ver = &deps[first];
-        format!(
-            "{}/{}-{}/src/{}.miva",
-            std_dir.display(),
-            first,
-            ver,
-            rest
-        )
+        format!("{}/{}-{}/src/{}.miva", std_dir.display(), first, ver, rest)
     } else {
         format!("{}/{}/src/{}.miva", std_dir.display(), first, rest)
     }

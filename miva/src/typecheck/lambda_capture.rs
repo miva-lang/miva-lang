@@ -1,6 +1,6 @@
+use super::*;
 use crate::ast::*;
 use std::collections::HashMap;
-use super::*;
 
 pub(crate) fn free_vars_inside(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     match e {
@@ -14,14 +14,21 @@ pub(crate) fn free_vars_inside(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<
             free_vars_inside(left, bound, out);
             free_vars_inside(right, bound, out);
         }
-        Expr::EIf { cond, then, else_, .. } => {
+        Expr::EIf {
+            cond, then, else_, ..
+        } => {
             free_vars_inside(cond, bound, out);
             free_vars_inside(then, bound, out);
             if let Some(el) = else_ {
                 free_vars_inside(el, bound, out);
             }
         }
-        Expr::EChoose { var, cases, otherwise, .. } => {
+        Expr::EChoose {
+            var,
+            cases,
+            otherwise,
+            ..
+        } => {
             free_vars_inside(var, bound, out);
             for c in cases {
                 free_vars_inside(&c.then, bound, out);
@@ -101,7 +108,9 @@ pub(crate) fn free_vars_inside(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<
             free_vars_inside(body, bound, out);
         }
         Expr::ELoop { body, .. } => free_vars_inside(body, bound, out),
-        Expr::EFor { var, range, body, .. } => {
+        Expr::EFor {
+            var, range, body, ..
+        } => {
             free_vars_inside(range, bound, out);
             let mut b2 = bound.clone();
             b2.push(var.clone());
@@ -139,7 +148,6 @@ pub(crate) fn compute_lambda_captures(
         .filter_map(|n| env.vars.get(&n).map(|t| (n, t.clone())))
         .collect()
 }
-
 
 /// Walk every expression in `defs` and fill each `ELambda.captures` with the
 /// free variables it references from the enclosing scope. Mutates the AST in
@@ -201,13 +209,7 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
             captures: _,
             body,
         } => {
-            let captures = compute_lambda_captures(
-                &TypeEnv {
-                    vars: env.clone(),
-                },
-                &params,
-                &body,
-            );
+            let captures = compute_lambda_captures(&TypeEnv { vars: env.clone() }, &params, &body);
             let mut child_env = env.clone();
             for p in &params {
                 match p {
@@ -233,7 +235,12 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                 field,
             }
         }
-        Expr::EBinOp { loc, op, left, right } => {
+        Expr::EBinOp {
+            loc,
+            op,
+            left,
+            right,
+        } => {
             let new_left = annotate_expr(*left, env);
             let new_right = annotate_expr(*right, env);
             Expr::EBinOp {
@@ -243,7 +250,12 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                 right: Box::new(new_right),
             }
         }
-        Expr::EIf { loc, cond, then, else_ } => {
+        Expr::EIf {
+            loc,
+            cond,
+            then,
+            else_,
+        } => {
             let new_cond = annotate_expr(*cond, env);
             let new_then = annotate_expr(*then, env);
             let new_else = else_.map(|e| Box::new(annotate_expr(*e, env)));
@@ -343,7 +355,12 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                             expr: Box::new(new_expr),
                         });
                     }
-                    Stmt::SLet { loc, mutable, name, expr } => {
+                    Stmt::SLet {
+                        loc,
+                        mutable,
+                        name,
+                        expr,
+                    } => {
                         let new_expr = annotate_expr(*expr, &child_env);
                         let vt = expr_simple_typ(&new_expr);
                         child_env.insert(name.clone(), vt);
@@ -354,7 +371,12 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                             expr: Box::new(new_expr),
                         });
                     }
-                    Stmt::SLetTyped { loc, name, typ, expr } => {
+                    Stmt::SLetTyped {
+                        loc,
+                        name,
+                        typ,
+                        expr,
+                    } => {
                         let new_expr = annotate_expr(*expr, &child_env);
                         child_env.insert(name.clone(), typ.clone());
                         new_stmts.push(Stmt::SLetTyped {
@@ -372,7 +394,12 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                             expr: Box::new(new_expr),
                         });
                     }
-                    Stmt::SFieldAssign { loc, target, field, expr } => {
+                    Stmt::SFieldAssign {
+                        loc,
+                        target,
+                        field,
+                        expr,
+                    } => {
                         let new_target = annotate_expr(*target, &child_env);
                         let new_expr = annotate_expr(*expr, &child_env);
                         new_stmts.push(Stmt::SFieldAssign {
@@ -407,20 +434,25 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
             }
         }
         Expr::EArrayLit { loc, values } => {
-            let new_values = values
-                .into_iter()
-                .map(|v| annotate_expr(v, env))
-                .collect();
-            Expr::EArrayLit { loc, values: new_values }
+            let new_values = values.into_iter().map(|v| annotate_expr(v, env)).collect();
+            Expr::EArrayLit {
+                loc,
+                values: new_values,
+            }
         }
         Expr::ETupleLit { loc, values } => {
-            let new_values = values
-                .into_iter()
-                .map(|v| annotate_expr(v, env))
-                .collect();
-            Expr::ETupleLit { loc, values: new_values }
+            let new_values = values.into_iter().map(|v| annotate_expr(v, env)).collect();
+            Expr::ETupleLit {
+                loc,
+                values: new_values,
+            }
         }
-        Expr::EStructLit { loc, name, fields, type_args } => {
+        Expr::EStructLit {
+            loc,
+            name,
+            fields,
+            type_args,
+        } => {
             let new_fields = fields
                 .into_iter()
                 .map(|mut vf| {
@@ -428,7 +460,12 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                     vf
                 })
                 .collect();
-            Expr::EStructLit { loc, name, fields: new_fields, type_args }
+            Expr::EStructLit {
+                loc,
+                name,
+                fields: new_fields,
+                type_args,
+            }
         }
         Expr::EAddr { loc, expr } => {
             let new_expr = annotate_expr(*expr, env);
@@ -481,4 +518,3 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
         other => other,
     }
 }
-

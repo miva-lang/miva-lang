@@ -1,6 +1,6 @@
+use super::*;
 use crate::ast::*;
 use std::collections::HashMap;
-use super::*;
 
 pub(crate) fn builtin_return_typ(name: &str) -> Option<Typ> {
     match name {
@@ -15,7 +15,7 @@ pub(crate) fn builtin_return_typ(name: &str) -> Option<Typ> {
         "box_new" | "box_deref" => None,
         "json_parse" | "json_array_get" | "json_object_get" | "json_object_find" => {
             Some(Typ::TPtrAny)
-        },
+        }
         "json_kind" | "json_array_len" | "json_object_len" => Some(Typ::TInt),
         "json_bool" => Some(Typ::TBool),
         "json_number" => Some(Typ::TFloat64),
@@ -23,8 +23,9 @@ pub(crate) fn builtin_return_typ(name: &str) -> Option<Typ> {
         "xml_parse" | "xml_child_get" => Some(Typ::TPtrAny),
         "xml_kind" | "xml_attr_count" | "xml_child_count" => Some(Typ::TInt),
         "xml_tag" | "xml_attr_name" | "xml_attr_value" | "xml_attr_find" | "xml_text"
-        | "xml_comment" | "xml_cdata" | "xml_pi_target" | "xml_pi_data"
-        | "xml_stringify" => Some(Typ::TString),
+        | "xml_comment" | "xml_cdata" | "xml_pi_target" | "xml_pi_data" | "xml_stringify" => {
+            Some(Typ::TString)
+        }
         "xml_free" => Some(Typ::TNull),
         "toml_parse" | "toml_array_get" | "toml_object_get" | "toml_object_find" => {
             Some(Typ::TPtrAny)
@@ -48,7 +49,12 @@ pub(crate) fn builtin_return_typ(name: &str) -> Option<Typ> {
     }
 }
 
-pub(crate) fn build_func_sigs(defs: &[Def]) -> (HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>, HashMap<String, Vec<String>>) {
+pub(crate) fn build_func_sigs(
+    defs: &[Def],
+) -> (
+    HashMap<String, (Vec<String>, Vec<Param>, Option<Typ>)>,
+    HashMap<String, Vec<String>>,
+) {
     let mut sigs = HashMap::new();
     let mut type_bounds_map = HashMap::new();
     for def in defs {
@@ -92,4 +98,3 @@ pub(crate) fn build_func_sigs(defs: &[Def]) -> (HashMap<String, (Vec<String>, Ve
     }
     (sigs, type_bounds_map)
 }
-

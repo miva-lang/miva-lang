@@ -1,3 +1,7 @@
 [project]
 name = "tuple"
 type = "bin"
+version = "0.1.0"
+
+[dependencies]
+std = "0.1.3"

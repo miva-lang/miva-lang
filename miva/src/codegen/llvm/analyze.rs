@@ -4,11 +4,17 @@ pub(crate) fn is_string_expr(expr: &Expr) -> bool {
     match expr {
         Expr::EString { .. } => true,
         Expr::ECall { name, .. } => {
-            matches!(name.as_str(), "string_from" | "string_concat" | "string_make" | "to_string")
+            matches!(
+                name.as_str(),
+                "string_from" | "string_concat" | "string_make" | "to_string"
+            )
         }
-        Expr::EBinOp { op: BinOp::Add, left, right, .. } => {
-            is_string_expr(left) || is_string_expr(right)
-        }
+        Expr::EBinOp {
+            op: BinOp::Add,
+            left,
+            right,
+            ..
+        } => is_string_expr(left) || is_string_expr(right),
         _ => false,
     }
 }
@@ -16,9 +22,13 @@ pub(crate) fn is_string_expr(expr: &Expr) -> bool {
 /// Check if an ECall returns a string based on cross-file function signature.
 pub(crate) fn call_returns_string(expr: &Expr, ctx: &LlvmCtx) -> bool {
     match expr {
-        Expr::ECall { name, type_args, .. } => {
+        Expr::ECall {
+            name, type_args, ..
+        } => {
             let lookup = name.rsplit('.').next().unwrap_or(name);
-            ctx.func_sigs.get(lookup).map_or(false, |sig| returns_from_sig(sig, type_args))
+            ctx.func_sigs
+                .get(lookup)
+                .map_or(false, |sig| returns_from_sig(sig, type_args))
         }
         _ => false,
     }
@@ -69,7 +79,12 @@ pub(crate) fn field_access_is_string(base_expr: &Expr, field_name: &str, ctx: &L
 /// return the i64 tag register name.
 pub(crate) fn load_enum_tag(ctx: &mut LlvmCtx, body: &mut String, reg: &str) -> String {
     let ptr = ctx.gen_tmp("etp");
-    body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr, reg));
+    body.push_str(&format!(
+        "{}{} = inttoptr i64 {} to ptr\n",
+        ctx.indent_str(),
+        ptr,
+        reg
+    ));
     let gep = ctx.gen_tmp("etg");
     body.push_str(&format!(
         "{}{} = getelementptr i64, ptr {}, i64 0\n",
@@ -78,16 +93,22 @@ pub(crate) fn load_enum_tag(ctx: &mut LlvmCtx, body: &mut String, reg: &str) -> 
         ptr
     ));
     let load = ctx.gen_tmp("etl");
-    body.push_str(&format!("{}{} = load i64, ptr {}\n", ctx.indent_str(), load, gep));
+    body.push_str(&format!(
+        "{}{} = load i64, ptr {}\n",
+        ctx.indent_str(),
+        load,
+        gep
+    ));
     load
 }
 
 /// Check if an EVar/EMove refers to a register known to hold a string.
 pub(crate) fn is_string_var(expr: &Expr, ctx: &LlvmCtx) -> bool {
     match expr {
-        Expr::EVar { name, .. } | Expr::EMove { name, .. } => {
-            ctx.var_reloads.get(name).map_or(false, |r| ctx.string_regs.contains(r))
-        }
+        Expr::EVar { name, .. } | Expr::EMove { name, .. } => ctx
+            .var_reloads
+            .get(name)
+            .map_or(false, |r| ctx.string_regs.contains(r)),
         _ => false,
     }
 }
@@ -99,18 +120,201 @@ pub(crate) fn is_string_var(expr: &Expr, ctx: &LlvmCtx) -> bool {
 pub(crate) fn resolve_enum_typ(t: &Typ, subst: &HashMap<String, Typ>) -> Typ {
     match t {
         Typ::TGenericParam { name } => subst.get(name).cloned().unwrap_or_else(|| t.clone()),
-        Typ::TStruct { name, fields, type_args } if fields.is_empty() && type_args.is_empty() => {
+        Typ::TStruct {
+            name,
+            fields,
+            type_args,
+        } if fields.is_empty() && type_args.is_empty() => {
             subst.get(name).cloned().unwrap_or_else(|| t.clone())
         }
-        Typ::TArray { of } => Typ::TArray { of: Box::new(resolve_enum_typ(of, subst)) },
+        Typ::TArray { of } => Typ::TArray {
+            of: Box::new(resolve_enum_typ(of, subst)),
+        },
         _ => t.clone(),
     }
 }
 
 /// Whether a (resolved) type is, or holds, a string value.
 pub(crate) fn typ_is_string(t: &Typ) -> bool {
-    matches!(t, Typ::TString)
-        || matches!(t, Typ::TArray { of } if matches!(**of, Typ::TString))
+    matches!(t, Typ::TString) || matches!(t, Typ::TArray { of } if matches!(**of, Typ::TString))
+}
+
+/// Substitute concrete type arguments for generic parameters throughout `t`.
+pub(crate) fn subst_type_params(t: &Typ, params: &[String], args: &[Typ]) -> Typ {
+    match t {
+        Typ::TGenericParam { name } => params
+            .iter()
+            .position(|p| p == name)
+            .and_then(|i| args.get(i))
+            .cloned()
+            .unwrap_or_else(|| t.clone()),
+        Typ::TStruct {
+            name,
+            fields,
+            type_args,
+        } if fields.is_empty() && type_args.is_empty() => params
+            .iter()
+            .position(|p| p == name)
+            .and_then(|i| args.get(i))
+            .cloned()
+            .unwrap_or_else(|| t.clone()),
+        Typ::TStruct {
+            name,
+            fields,
+            type_args,
+        } => Typ::TStruct {
+            name: name.clone(),
+            fields: fields.clone(),
+            type_args: type_args
+                .iter()
+                .map(|a| subst_type_params(a, params, args))
+                .collect(),
+        },
+        Typ::TArray { of } => Typ::TArray {
+            of: Box::new(subst_type_params(of, params, args)),
+        },
+        Typ::TTuple { elems } => Typ::TTuple {
+            elems: elems
+                .iter()
+                .map(|e| subst_type_params(e, params, args))
+                .collect(),
+        },
+        Typ::TFuture { of } => Typ::TFuture {
+            of: Box::new(subst_type_params(of, params, args)),
+        },
+        Typ::TBox { of } => Typ::TBox {
+            of: Box::new(subst_type_params(of, params, args)),
+        },
+        _ => t.clone(),
+    }
+}
+
+/// Best-effort type inference for an expression, used to make codegen
+/// decisions that the sparse `var_types` table cannot answer reliably (SLet
+/// bindings, tuple field access, string/bool payload printing). Returns `None`
+/// when the type is not statically known.
+pub(crate) fn infer_expr_type(expr: &Expr, ctx: &LlvmCtx) -> Option<Typ> {
+    match expr {
+        Expr::EInt { .. } => Some(Typ::TInt),
+        Expr::EBool { .. } => Some(Typ::TBool),
+        Expr::EChar { .. } => Some(Typ::TChar),
+        Expr::EFloat { .. } => Some(Typ::TFloat64),
+        Expr::EString { .. } => Some(Typ::TString),
+        Expr::EVar { name, .. } | Expr::EMove { name, .. } => ctx.var_types.get(name).cloned(),
+        Expr::ETupleLit { values, .. } => Some(Typ::TTuple {
+            elems: values
+                .iter()
+                .map(|v| infer_expr_type(v, ctx).unwrap_or(Typ::TInt))
+                .collect(),
+        }),
+        Expr::EStructLit {
+            name, type_args, ..
+        } => Some(Typ::TStruct {
+            name: name.clone(),
+            fields: vec![],
+            type_args: type_args.clone(),
+        }),
+        Expr::EArrayLit { values, .. } => values
+            .first()
+            .and_then(|v| infer_expr_type(v, ctx))
+            .map(|of| Typ::TArray { of: Box::new(of) }),
+        Expr::ECall {
+            name,
+            type_args,
+            args,
+            ..
+        } => {
+            // Enum constructor `Enum.Variant` (or desugared `Variant(Enum, ..)`):
+            // the value has the enum's type.
+            if name.matches('.').count() == 1 {
+                let enum_name = &name[..name.find('.').unwrap()];
+                if ctx.enum_defs.contains_key(enum_name) {
+                    return Some(Typ::TStruct {
+                        name: enum_name.to_string(),
+                        fields: vec![],
+                        type_args: vec![],
+                    });
+                }
+            }
+            if let Some(Expr::EVar { name: n, .. }) = args.first() {
+                if n.chars().next().map_or(false, |c| c.is_uppercase())
+                    && ctx.enum_defs.contains_key(n)
+                {
+                    return Some(Typ::TStruct {
+                        name: n.clone(),
+                        fields: vec![],
+                        type_args: vec![],
+                    });
+                }
+            }
+            let lookup = name.rsplit('.').next().unwrap_or(name);
+            ctx.func_sigs.get(lookup).and_then(|sig| {
+                sig.returns
+                    .as_ref()
+                    .map(|r| subst_type_params(r, &sig.type_params, type_args))
+            })
+        }
+        Expr::EFieldAccess {
+            expr: base, field, ..
+        } => infer_field_type(base, field, ctx),
+        Expr::ELambda { params, ret, .. } => Some(Typ::TFunc {
+            params: params
+                .iter()
+                .map(|p| match p {
+                    Param::PRef { typ, .. } | Param::POwn { typ, .. } => typ.clone(),
+                })
+                .collect(),
+            returns: Box::new(ret.clone()),
+        }),
+        Expr::ECast { to, .. } => Some(to.clone()),
+        Expr::EBinOp {
+            op: BinOp::Add,
+            left,
+            right,
+            ..
+        } => {
+            if is_string_expr(left) || is_string_expr(right) {
+                Some(Typ::TString)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Type of the value produced by `base.field`. Handles tuple element indices
+/// and struct/shape fields (via the struct field type table).
+pub(crate) fn infer_field_type(base: &Expr, field: &str, ctx: &LlvmCtx) -> Option<Typ> {
+    match infer_expr_type(base, ctx) {
+        Some(Typ::TTuple { elems }) => field
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| elems.get(i))
+            .cloned(),
+        Some(Typ::TStruct { name, .. }) => ctx
+            .struct_field_types
+            .get(&name)
+            .and_then(|m| m.get(field))
+            .cloned(),
+        Some(Typ::TShape { name, .. }) => ctx
+            .struct_field_types
+            .get(&name)
+            .and_then(|m| m.get(field))
+            .cloned(),
+        _ => None,
+    }
+}
+
+/// Whether `expr` is a tuple or (non-enum) struct value, returning its type.
+/// Used to decide when `==`/`!=` needs a deep, per-field comparison.
+pub(crate) fn aggregate_compare_type(l: &Expr, r: &Expr, ctx: &LlvmCtx) -> Option<Typ> {
+    let t = infer_expr_type(l, ctx).or_else(|| infer_expr_type(r, ctx))?;
+    match &t {
+        Typ::TTuple { .. } => Some(t),
+        Typ::TStruct { name, .. } if !ctx.enum_defs.contains_key(name) => Some(t),
+        _ => None,
+    }
 }
 
 /// Given a type that names an enum (e.g. `Box[string]`), return the payload
@@ -121,7 +325,9 @@ pub(crate) fn enum_string_payloads_from_typ(
     enum_defs: &HashMap<String, (Vec<String>, HashMap<String, Vec<Typ>>)>,
 ) -> Option<Vec<usize>> {
     let (enum_name, type_args) = match typ {
-        Typ::TStruct { name, type_args, .. } => (name.clone(), type_args.clone()),
+        Typ::TStruct {
+            name, type_args, ..
+        } => (name.clone(), type_args.clone()),
         _ => return None,
     };
     let (params, variants) = enum_defs.get(&enum_name)?;
@@ -169,17 +375,22 @@ pub(crate) fn enum_ctor_string_payloads(
 
 /// Numeric category of a value, used to pick the correct `string_from_*`
 /// runtime conversion when stringifying a non-string value.
+#[derive(Debug)]
 pub(crate) enum NumKind {
     Int,
     Float,
     Bool,
 }
-
 pub(crate) fn expr_numeric_kind(expr: &Expr, ctx: &LlvmCtx) -> NumKind {
     match expr {
         Expr::EFloat { .. } => NumKind::Float,
         Expr::EInt { .. } => NumKind::Int,
         Expr::EBool { .. } => NumKind::Bool,
+        Expr::EVar { name, .. } => match ctx.var_types.get(name) {
+            Some(Typ::TBool) => NumKind::Bool,
+            Some(Typ::TFloat64) | Some(Typ::TFloat32) => NumKind::Float,
+            _ => NumKind::Int,
+        },
         Expr::ECall { name, .. } => {
             let lookup = name.rsplit('.').next().unwrap_or(name);
             match ctx.func_sigs.get(lookup) {
@@ -192,11 +403,23 @@ pub(crate) fn expr_numeric_kind(expr: &Expr, ctx: &LlvmCtx) -> NumKind {
             }
         }
         Expr::ETupleLit { .. } => NumKind::Int,
+        Expr::EFieldAccess {
+            expr: base, field, ..
+        } => match infer_field_type(base, field, ctx) {
+            Some(Typ::TBool) => NumKind::Bool,
+            Some(Typ::TFloat64) | Some(Typ::TFloat32) => NumKind::Float,
+            _ => NumKind::Int,
+        },
         _ => NumKind::Int,
     }
 }
 
-pub(crate) fn emit_fresh_loads(ctx: &mut LlvmCtx, body: &mut String, before: &HashMap<String, String>, names: &[String]) {
+pub(crate) fn emit_fresh_loads(
+    ctx: &mut LlvmCtx,
+    body: &mut String,
+    before: &HashMap<String, String>,
+    names: &[String],
+) {
     for name in names {
         let addr = ctx.get_var_addr(name);
         // Use the per-variable seq counter so we stay inside the same
@@ -205,9 +428,15 @@ pub(crate) fn emit_fresh_loads(ctx: &mut LlvmCtx, body: &mut String, before: &Ha
         let count = ctx.var_seq.entry(name.to_string()).or_insert(0);
         let new_reload = format!("{}.r.{}", name, count);
         *count += 1;
-        body.push_str(&format!("  %{} = load i64, ptr %{}, align 8\n", new_reload, addr));
+        body.push_str(&format!(
+            "  %{} = load i64, ptr %{}, align 8\n",
+            new_reload, addr
+        ));
         ctx.var_reloads.insert(name.clone(), new_reload.clone());
-        if before.get(name).map_or(false, |r| ctx.string_regs.contains(r)) {
+        if before
+            .get(name)
+            .map_or(false, |r| ctx.string_regs.contains(r))
+        {
             ctx.string_regs.insert(new_reload);
         }
     }
@@ -306,4 +535,3 @@ pub(crate) fn append_br_after_merge(body: &mut String, merge_label: &str, target
     }
     *body = out;
 }
-

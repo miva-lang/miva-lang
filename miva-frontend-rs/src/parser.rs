@@ -10,6 +10,7 @@ pub struct Parser<'input> {
     peeked: Option<Option<(usize, Token<'input>, usize)>>,
     pending_type_args: Vec<Typ>,
     last_offset: usize,
+    name_scopes: Vec<Vec<String>>,
 }
 
 impl<'input> Parser<'input> {
@@ -21,6 +22,7 @@ impl<'input> Parser<'input> {
             peeked: None,
             pending_type_args: vec![],
             last_offset: 0,
+            name_scopes: vec![vec![]],
         }
     }
 
@@ -64,6 +66,16 @@ impl<'input> Parser<'input> {
         Ok(self.peek()?.map(|(_, t, _)| t))
     }
 
+    fn peek_token_next(&mut self) -> Result<Option<Token<'input>>, String> {
+        let saved_lexer = self.lexer.clone();
+        let saved_peeked = self.peeked.take();
+        let _ = self.peek()?;
+        let next = self.peeked.take();
+        self.lexer = saved_lexer;
+        self.peeked = saved_peeked;
+        Ok(next.flatten().map(|(_, t, _)| t))
+    }
+
     fn expect(&mut self, expected: &Token<'input>) -> Result<(usize, usize), String> {
         let (start, tok, end) = self.advance()?;
         if &tok != expected {
@@ -92,6 +104,10 @@ impl<'input> Parser<'input> {
         match tok {
             Token::Ident(s) => Ok((s.to_string(), start)),
             Token::IntLit(s) => Ok((s.to_string(), start)),
+            Token::FloatLit(s) => {
+                let int_part = s.split('.').next().unwrap_or(s);
+                Ok((int_part.to_string(), start))
+            }
             _ => Err(format!("Expected field name, found {:?}", tok)),
         }
     }
@@ -141,7 +157,13 @@ impl<'input> Parser<'input> {
             match &tok {
                 Token::Unsafe => return self.parse_func_unsafe(),
                 Token::Trusted => return self.parse_func_trusted(),
-                Token::CKeyword => return self.parse_c_func(true),
+                Token::Ident("c")
+                    if self
+                        .peek_token_next()?
+                        .map_or(false, |t| matches!(t, Token::Unsafe)) =>
+                {
+                    return self.parse_c_func(true);
+                }
                 Token::Inline => return self.parse_c_func(false),
                 Token::Async => return self.parse_func_async(),
                 Token::Test => return self.parse_test(),
@@ -225,7 +247,14 @@ impl<'input> Parser<'input> {
         }
 
         // Must be a function — pass bounds along
-        Ok(self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Safe, false)?)
+        Ok(self.parse_func_body_with_bounds(
+            name,
+            type_params,
+            type_bounds,
+            start,
+            Safety::Safe,
+            false,
+        )?)
     }
 
     fn parse_struct_body(
@@ -288,7 +317,10 @@ impl<'input> Parser<'input> {
             } else {
                 vec![]
             };
-            variants.push(EnumVariant { name: vname, payload });
+            variants.push(EnumVariant {
+                name: vname,
+                payload,
+            });
             if self.peek_token()? == Some(&Token::Comma) {
                 self.advance()?;
             }
@@ -360,8 +392,15 @@ impl<'input> Parser<'input> {
             None
         };
         self.expect(&Token::DArrow)?;
+        self.name_scopes.push(vec![]);
+        for p in &params {
+            let name = match p {
+                Param::PRef { name, .. } | Param::POwn { name, .. } => name,
+            };
+            self.declare_name(name);
+        }
         let body = self.parse_expr()?;
-        
+        self.name_scopes.pop();
         Ok(Def::DFunc {
             loc: self.loc(start),
             name,
@@ -450,7 +489,14 @@ impl<'input> Parser<'input> {
             (vec![], vec![])
         };
         self.expect(&Token::Eq)?;
-        self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Unsafe, false)
+        self.parse_func_body_with_bounds(
+            name,
+            type_params,
+            type_bounds,
+            start,
+            Safety::Unsafe,
+            false,
+        )
     }
 
     fn parse_func_trusted(&mut self) -> Result<Def, String> {
@@ -489,7 +535,14 @@ impl<'input> Parser<'input> {
             (vec![], vec![])
         };
         self.expect(&Token::Eq)?;
-        self.parse_func_body_with_bounds(name, type_params, type_bounds, start, Safety::Trusted, false)
+        self.parse_func_body_with_bounds(
+            name,
+            type_params,
+            type_bounds,
+            start,
+            Safety::Trusted,
+            false,
+        )
     }
 
     fn parse_c_func(&mut self, used_c_keyword: bool) -> Result<Def, String> {
@@ -765,7 +818,6 @@ impl<'input> Parser<'input> {
     }
 
     // ── Types ────────────────────────────────────────────────────────
-
     fn parse_typ(&mut self) -> Result<Typ, String> {
         match self.peek_token()? {
             Some(&Token::LParen) => {
@@ -861,9 +913,7 @@ impl<'input> Parser<'input> {
                     self.expect(&Token::LBracket)?;
                     let of = self.parse_typ()?;
                     self.expect(&Token::RBracket)?;
-                    return Ok(Typ::TFuture {
-                        of: Box::new(of),
-                    });
+                    return Ok(Typ::TFuture { of: Box::new(of) });
                 }
                 let type_args = if self.peek_token()? == Some(&Token::LBracket) {
                     self.advance()?; // consume "["
@@ -924,6 +974,31 @@ impl<'input> Parser<'input> {
                                 self.expect(&Token::Eq)?;
                                 let expr = self.parse_expr()?;
                                 self.expect(&Token::Semi)?;
+                                self.declare_name(&name);
+                                return Ok(Stmt::SLetTyped {
+                                    loc: self.loc(start),
+                                    name,
+                                    typ,
+                                    expr: Box::new(expr),
+                                });
+                            }
+                            Some(Token::Ident(_))
+                            | Some(Token::LBracket)
+                            | Some(Token::Int)
+                            | Some(Token::Bool)
+                            | Some(Token::Float32)
+                            | Some(Token::Float64)
+                            | Some(Token::Char)
+                            | Some(Token::String)
+                            | Some(Token::Ptrany)
+                            | Some(Token::Ptr)
+                            | Some(Token::Box)
+                            | Some(Token::Fn) => {
+                                let typ = self.parse_typ()?;
+                                self.expect(&Token::Eq)?;
+                                let expr = self.parse_expr()?;
+                                self.expect(&Token::Semi)?;
+                                self.declare_name(&name);
                                 return Ok(Stmt::SLetTyped {
                                     loc: self.loc(start),
                                     name,
@@ -935,6 +1010,7 @@ impl<'input> Parser<'input> {
                                 self.advance()?;
                                 let expr = self.parse_expr()?;
                                 self.expect(&Token::Semi)?;
+                                self.declare_name(&name);
                                 return Ok(Stmt::SLet {
                                     loc: self.loc(start),
                                     mutable: false,
@@ -943,7 +1019,10 @@ impl<'input> Parser<'input> {
                                 });
                             }
                             _ => {
-                                return Err("expected ':' or '=' after identifier in let statement".to_string());
+                                return Err(
+                                    "expected ':' or '=' after identifier in let statement"
+                                        .to_string(),
+                                );
                             }
                         }
                     }
@@ -984,22 +1063,29 @@ impl<'input> Parser<'input> {
             };
             match self.peek_token()? {
                 Some(&Token::ColonEq) => {
-                    // `name := expr` (no `let`/`mut` prefix) declares and
-                    // assigns a new variable, like `let name = expr`. The
-                    // `:=` shorthand is used pervasively in the std library
-                    // (e.g. `k := json_kind(v)`) for first declaration, so it
-                    // must introduce a binding rather than assign to an
-                    // existing one. Mutability is allowed so a later `=`
-                    // reassignment in the same scope type-checks.
+                    // `name := expr` (no `let`/`mut` prefix): declare-and-assign
+                    // when `name` is not yet in scope (the `:=` shorthand used
+                    // pervasively in the std library for first declaration),
+                    // otherwise reassign the existing binding (as in
+                    // `new_cap := new_cap * 2` after a `mut new_cap := ...`).
                     self.advance()?; // ":="
                     let expr = self.parse_expr()?;
                     self.expect(&Token::Semi)?;
-                    Ok(Stmt::SLet {
-                        loc: self.loc(start),
-                        mutable: true,
-                        name,
-                        expr: Box::new(expr),
-                    })
+                    if self.is_name_declared(&name) {
+                        Ok(Stmt::SAssign {
+                            loc: self.loc(start),
+                            name,
+                            expr: Box::new(expr),
+                        })
+                    } else {
+                        self.declare_name(&name);
+                        Ok(Stmt::SLet {
+                            loc: self.loc(start),
+                            mutable: true,
+                            name,
+                            expr: Box::new(expr),
+                        })
+                    }
                 }
                 Some(&Token::Eq) => {
                     self.advance()?; // "="
@@ -1089,6 +1175,7 @@ impl<'input> Parser<'input> {
         self.expect(&Token::Eq)?;
         let expr = self.parse_expr()?;
         self.expect(&Token::Semi)?;
+        self.declare_name(&name);
         Ok(Stmt::SLetTyped {
             loc: self.loc(start),
             name,
@@ -1103,6 +1190,7 @@ impl<'input> Parser<'input> {
         self.expect(&Token::ColonEq)?;
         let expr = self.parse_expr()?;
         self.expect(&Token::Semi)?;
+        self.declare_name(&name);
         Ok(Stmt::SLet {
             loc: self.loc(start),
             mutable: true,
@@ -1118,6 +1206,9 @@ impl<'input> Parser<'input> {
         self.expect(&Token::Eq)?;
         let expr = self.parse_expr()?;
         self.expect(&Token::Semi)?;
+        for p in &patterns {
+            self.declare_name(p);
+        }
         Ok(Stmt::SLetTuple {
             loc: self.loc(start),
             patterns,
@@ -1264,9 +1355,7 @@ impl<'input> Parser<'input> {
                     let (method, _) = self.parse_field_name()?;
                     match self.peek_token()? {
                         // Method call with type args: expr.method[T, U](args)
-                        Some(&Token::LBracket)
-                            if !matches!(&expr, Expr::EFieldAccess { .. }) =>
-                        {
+                        Some(&Token::LBracket) if !matches!(&expr, Expr::EFieldAccess { .. }) => {
                             self.pending_type_args.clear();
                             self.advance()?;
                             let mut type_args = Vec::new();
@@ -1302,9 +1391,7 @@ impl<'input> Parser<'input> {
                             };
                         }
                         // Method call: expr.method(args)
-                        Some(&Token::LParen)
-                            if !matches!(&expr, Expr::EFieldAccess { .. }) =>
-                        {
+                        Some(&Token::LParen) if !matches!(&expr, Expr::EFieldAccess { .. }) => {
                             self.advance()?;
                             let mut args = Vec::new();
                             if self.peek_token()? != Some(&Token::RParen) {
@@ -1560,6 +1647,7 @@ impl<'input> Parser<'input> {
     fn parse_for_stmt(&mut self) -> Result<Stmt, String> {
         let start = self.advance()?.0; // "for"
         let (var, _) = self.expect_ident()?;
+        self.declare_name(&var);
         self.expect_keyword(&Token::In)?;
         self.expect(&Token::LParen)?;
         let range = self.parse_expr()?;
@@ -1586,6 +1674,13 @@ impl<'input> Parser<'input> {
     }
 
     fn parse_stmt_list(&mut self) -> Result<Vec<Stmt>, String> {
+        self.name_scopes.push(vec![]);
+        let res = self.parse_stmt_list_inner();
+        self.name_scopes.pop();
+        res
+    }
+
+    fn parse_stmt_list_inner(&mut self) -> Result<Vec<Stmt>, String> {
         let mut stmts = Vec::new();
         loop {
             match self.peek_token()? {
@@ -1594,6 +1689,18 @@ impl<'input> Parser<'input> {
             }
         }
         Ok(stmts)
+    }
+
+    fn declare_name(&mut self, name: &str) {
+        if let Some(top) = self.name_scopes.last_mut() {
+            if !top.iter().any(|n| n == name) {
+                top.push(name.to_string());
+            }
+        }
+    }
+
+    fn is_name_declared(&self, name: &str) -> bool {
+        self.name_scopes.iter().any(|s| s.iter().any(|n| n == name))
     }
 
     fn parse_opt_expr(&mut self) -> Result<Option<Box<Expr>>, String> {
@@ -1646,18 +1753,10 @@ impl<'input> Parser<'input> {
 
         loop {
             let op = match self.peek_token()? {
-                Some(&Token::OrOr)
-                | Some(&Token::AndAnd)
-                | Some(&Token::EqEq)
-                | Some(&Token::Neq)
-                | Some(&Token::Lt)
-                | Some(&Token::Gt)
-                | Some(&Token::LtEq)
-                | Some(&Token::GtEq)
-                | Some(&Token::Plus)
-                | Some(&Token::Minus)
-                | Some(&Token::Star)
-                | Some(&Token::Slash) => {
+                Some(&Token::OrOr) | Some(&Token::AndAnd) | Some(&Token::EqEq)
+                | Some(&Token::Neq) | Some(&Token::Lt) | Some(&Token::Gt) | Some(&Token::LtEq)
+                | Some(&Token::GtEq) | Some(&Token::Plus) | Some(&Token::Minus)
+                | Some(&Token::Star) | Some(&Token::Slash) => {
                     let tok = self.peek_token()?.unwrap().clone();
                     tok
                 }
@@ -1743,22 +1842,22 @@ impl<'input> Parser<'input> {
                 self.advance()?;
                 if self.peek_token()? == Some(&Token::RParen) {
                     self.advance()?;
-                    return Ok(Expr::EVoid { loc: self.loc(start) });
+                    return Ok(Expr::EVoid {
+                        loc: self.loc(start),
+                    });
                 }
                 let mut values = Vec::new();
                 values.push(self.parse_expr()?);
-                if self.peek_token()? == Some(&Token::Comma) {
-                    loop {
-                        self.advance()?;
-                        values.push(self.parse_expr()?);
-                        if self.peek_token()? == Some(&Token::Comma) {
-                            self.advance()?;
-                        } else {
-                            break;
-                        }
-                    }
+                let mut is_tuple = false;
+                while self.peek_token()? == Some(&Token::Comma) {
+                    self.advance()?;
+                    values.push(self.parse_expr()?);
+                    is_tuple = true;
                 }
                 self.expect(&Token::RParen)?;
+                if !is_tuple {
+                    return values.pop().ok_or_else(|| "empty paren".to_string());
+                }
                 Ok(Expr::ETupleLit {
                     loc: self.loc(start),
                     values,
@@ -1986,7 +2085,15 @@ impl<'input> Parser<'input> {
         self.expect(&Token::Colon)?;
         let ret = self.parse_typ()?;
         self.expect(&Token::DArrow)?;
+        self.name_scopes.push(vec![]);
+        for p in &params {
+            let name = match p {
+                Param::PRef { name, .. } | Param::POwn { name, .. } => name,
+            };
+            self.declare_name(name);
+        }
         let body = self.parse_block_expr()?;
+        self.name_scopes.pop();
         Ok(Expr::ELambda {
             loc: self.loc(start),
             params,
@@ -2134,10 +2241,19 @@ fn last_ident(expr: &Expr) -> Option<&str> {
 }
 
 fn maybe_enum_pattern(expr: Expr) -> Expr {
-    if let Expr::EFieldAccess { loc, expr: e, field } = &expr {
+    if let Expr::EFieldAccess {
+        loc,
+        expr: e,
+        field,
+    } = &expr
+    {
         if field.chars().next().map_or(false, |c| c.is_uppercase()) {
             if let Some(parent_field) = last_ident(e) {
-                if parent_field.chars().next().map_or(false, |c| c.is_uppercase()) {
+                if parent_field
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_uppercase())
+                {
                     return Expr::EEnumPattern {
                         loc: loc.clone(),
                         enum_name: parent_field.to_string(),
@@ -2155,12 +2271,7 @@ fn maybe_enum_pattern(expr: Expr) -> Expr {
 /// every argument is a bare identifier, the call is treated as an enum
 /// destructuring pattern (used in `when` arms of a `choose`), so it is emitted
 /// as `EEnumPattern`. Otherwise it stays a normal call.
-fn enum_pattern_or_call(
-    loc: Loc,
-    name: String,
-    type_args: Vec<Typ>,
-    args: Vec<Expr>,
-) -> Expr {
+fn enum_pattern_or_call(loc: Loc, name: String, type_args: Vec<Typ>, args: Vec<Expr>) -> Expr {
     // Enum patterns in `when` arms never carry explicit type arguments; if they
     // are present, treat the construct as a normal enum-constructor call.
     //
@@ -2283,7 +2394,12 @@ mod tests {
     fn test_parse_generic_enum_constructor_type_args() {
         let def = parse_first("Box[T] = enum { Empty, Value(T) }");
         match def {
-            Def::DEnum { name, type_params, variants, .. } => {
+            Def::DEnum {
+                name,
+                type_params,
+                variants,
+                ..
+            } => {
                 assert_eq!(name, "Box");
                 assert_eq!(type_params, vec!["T".to_string()]);
                 assert_eq!(variants.len(), 2);
@@ -2295,7 +2411,9 @@ mod tests {
         let mut parser = Parser::new(lexer, "Box[int](5)", "test.mv");
         let expr = parser.parse_expr().unwrap();
         match expr {
-            Expr::ECall { name, type_args, .. } => {
+            Expr::ECall {
+                name, type_args, ..
+            } => {
                 assert_eq!(name, "Box");
                 assert_eq!(type_args.len(), 1);
             }
@@ -2309,7 +2427,12 @@ mod tests {
         let mut parser = Parser::new(lexer, "Box.Value[int](5)", "test.mv");
         let expr = parser.parse_expr().unwrap();
         match expr {
-            Expr::EMethodCall { method, type_args, args, .. } => {
+            Expr::EMethodCall {
+                method,
+                type_args,
+                args,
+                ..
+            } => {
                 assert_eq!(method, "Value");
                 assert_eq!(type_args.len(), 1);
                 assert_eq!(args.len(), 1);
@@ -2321,7 +2444,12 @@ mod tests {
         let mut parser2 = Parser::new(lexer2, "Box[int].Value(5)", "test.mv");
         let expr2 = parser2.parse_expr().unwrap();
         match expr2 {
-            Expr::EMethodCall { method, type_args, args, .. } => {
+            Expr::EMethodCall {
+                method,
+                type_args,
+                args,
+                ..
+            } => {
                 assert_eq!(method, "Value");
                 assert_eq!(type_args.len(), 1);
                 assert_eq!(args.len(), 1);
@@ -2437,7 +2565,8 @@ mod tests {
 
     #[test]
     fn test_parse_func_type() {
-        let defs = crate::parse("f = (g: fn(int, int): int): int => { return 0; }", "t.mv").unwrap();
+        let defs =
+            crate::parse("f = (g: fn(int, int): int): int => { return 0; }", "t.mv").unwrap();
         assert_eq!(defs.len(), 1);
         match &defs[0] {
             Def::DFunc { params, .. } => {
@@ -2454,7 +2583,11 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_simple() {
-        let defs = crate::parse("apply = (f: fn(int): int, x: int): int => { return f(x); }", "t.mv").unwrap();
+        let defs = crate::parse(
+            "apply = (f: fn(int): int, x: int): int => { return f(x); }",
+            "t.mv",
+        )
+        .unwrap();
         assert_eq!(defs.len(), 1);
         match &defs[0] {
             Def::DFunc { params, body, .. } => {
@@ -2471,7 +2604,9 @@ mod tests {
             Expr::ELambda { .. } => true,
             Expr::EBlock { stmts, result, .. } => {
                 stmts.iter().any(|s| match s {
-                    Stmt::SLet { expr, .. } | Stmt::SLetTyped { expr, .. } => find_lambda_in_block(expr),
+                    Stmt::SLet { expr, .. } | Stmt::SLetTyped { expr, .. } => {
+                        find_lambda_in_block(expr)
+                    }
                     Stmt::SExpr { expr, .. } => find_lambda_in_block(expr),
                     Stmt::SReturn { expr, .. } => find_lambda_in_block(expr),
                     _ => false,
@@ -2483,7 +2618,11 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_inside_block() {
-        let defs = crate::parse("main = () => { g := (x: int): int => { return x + 1; }; return 0; }", "t.mv").unwrap();
+        let defs = crate::parse(
+            "main = () => { g := (x: int): int => { return x + 1; }; return 0; }",
+            "t.mv",
+        )
+        .unwrap();
         assert_eq!(defs.len(), 1);
         match &defs[0] {
             Def::DFunc { body, .. } => {
@@ -2495,7 +2634,11 @@ mod tests {
 
     #[test]
     fn test_parse_lambda_empty_params() {
-        let defs = crate::parse("main = () => { f := (): int => { return 42; }; return 0; }", "t.mv").unwrap();
+        let defs = crate::parse(
+            "main = () => { f := (): int => { return 42; }; return 0; }",
+            "t.mv",
+        )
+        .unwrap();
         assert_eq!(defs.len(), 1);
         match &defs[0] {
             Def::DFunc { body, .. } => {
@@ -2503,6 +2646,27 @@ mod tests {
             }
             _ => panic!("expected DFunc"),
         }
+    }
+
+    #[test]
+    fn test_parse_tuple_3_element() {
+        let src = "f = (): (int, int, int) => { return (1, 2, 3); }";
+        let defs = crate::parse(src, "t.mv").unwrap();
+        assert_eq!(defs.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_tuple_2_element() {
+        let src = "f = (): (int, int) => { return (1, 2); }";
+        let defs = crate::parse(src, "t.mv").unwrap();
+        assert_eq!(defs.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_let_simple() {
+        let src = "main = () => { let c = 1; }";
+        let defs = crate::parse(src, "t.mv").unwrap();
+        assert_eq!(defs.len(), 1);
     }
 }
 
@@ -2516,6 +2680,7 @@ impl<'input> Clone for Parser<'input> {
             peeked: self.peeked.clone(),
             pending_type_args: self.pending_type_args.clone(),
             last_offset: self.last_offset,
+            name_scopes: self.name_scopes.clone(),
         }
     }
 }

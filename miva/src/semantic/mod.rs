@@ -72,7 +72,12 @@ impl<'a> BanCtx<'a> {
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::ECall { loc, type_args, args, .. } => {
+            Expr::ECall {
+                loc,
+                type_args,
+                args,
+                ..
+            } => {
                 for ta in type_args {
                     self.generic_arg(ta, loc, "generic");
                 }
@@ -80,7 +85,13 @@ impl<'a> BanCtx<'a> {
                     self.expr(a);
                 }
             }
-            Expr::EMethodCall { loc, type_args, expr, args, .. } => {
+            Expr::EMethodCall {
+                loc,
+                type_args,
+                expr,
+                args,
+                ..
+            } => {
                 for ta in type_args {
                     self.generic_arg(ta, loc, "generic");
                 }
@@ -89,7 +100,12 @@ impl<'a> BanCtx<'a> {
                     self.expr(a);
                 }
             }
-            Expr::EStructLit { loc, type_args, fields, .. } => {
+            Expr::EStructLit {
+                loc,
+                type_args,
+                fields,
+                ..
+            } => {
                 for ta in type_args {
                     self.generic_arg(ta, loc, "generic");
                 }
@@ -114,14 +130,21 @@ impl<'a> BanCtx<'a> {
                     self.expr(r);
                 }
             }
-            Expr::EIf { cond, then, else_, .. } => {
+            Expr::EIf {
+                cond, then, else_, ..
+            } => {
                 self.expr(cond);
                 self.expr(then);
                 if let Some(e) = else_ {
                     self.expr(e);
                 }
             }
-            Expr::EChoose { var, cases, otherwise, .. } => {
+            Expr::EChoose {
+                var,
+                cases,
+                otherwise,
+                ..
+            } => {
                 self.expr(var);
                 for c in cases {
                     self.expr(&c.when);
@@ -160,7 +183,13 @@ impl<'a> BanCtx<'a> {
                     self.expr(v);
                 }
             }
-            Expr::ELambda { loc, params, ret, body, .. } => {
+            Expr::ELambda {
+                loc,
+                params,
+                ret,
+                body,
+                ..
+            } => {
                 for p in params {
                     let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
                     self.typ(typ, loc);
@@ -178,9 +207,10 @@ impl<'a> BanCtx<'a> {
                 self.typ(typ, loc);
                 self.expr(expr);
             }
-            Stmt::SLet { expr, .. } | Stmt::SLetTuple { expr, .. } | Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
-                self.expr(expr)
-            }
+            Stmt::SLet { expr, .. }
+            | Stmt::SLetTuple { expr, .. }
+            | Stmt::SAssign { expr, .. }
+            | Stmt::SExpr { expr, .. } => self.expr(expr),
             Stmt::SFieldAssign { target, expr, .. } => {
                 self.expr(target);
                 self.expr(expr);
@@ -332,10 +362,15 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                 .find('.')
                 .map(|dot| symbol_table.lookup_enum(&name[..dot]).is_some())
                 .unwrap_or(false)
-                || args.first().map(|a| match a {
-                    Expr::EVar { name: n, .. } => symbol_table.lookup_enum(n.as_str()).map_or(false, |e| e.variants.iter().any(|v| &v.name == name)),
-                    _ => false,
-                }).unwrap_or(false);
+                || args
+                    .first()
+                    .map(|a| match a {
+                        Expr::EVar { name: n, .. } => symbol_table
+                            .lookup_enum(n.as_str())
+                            .map_or(false, |e| e.variants.iter().any(|v| &v.name == name)),
+                        _ => false,
+                    })
+                    .unwrap_or(false);
             let safety = symbol_table
                 .get_function_safety(name)
                 .or_else(|| ctx.global_safety.get(name).cloned());
@@ -345,10 +380,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                         errs.push(Error::new(
                             "E0009",
                             loc,
-                            &format!(
-                                "cannot call unsafe function '{}' from safe function",
-                                name
-                            ),
+                            &format!("cannot call unsafe function '{}' from safe function", name),
                         ));
                     }
                 }
@@ -526,7 +558,7 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                     match symbol_table.lookup_enum(enum_name) {
                         Some(e) => match e.variants.iter().find(|v| &v.name == variant) {
                             Some(v) => {
-                                if v.payload.len() != bindings.len() {
+                                if v.payload.len() != bindings.len() && !bindings.is_empty() {
                                     errs.push(Error::new(
                                         "E0016",
                                         loc,
@@ -658,11 +690,9 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                             },
                             Expr::EVar { name: v, .. }
                             | Expr::EMove { name: v, .. }
-                            | Expr::EClone { name: v, .. } => ctx
-                                .vars
-                                .get(v)
-                                .map(|i| i.typ.clone())
-                                .unwrap_or(Typ::TInt),
+                            | Expr::EClone { name: v, .. } => {
+                                ctx.vars.get(v).map(|i| i.typ.clone()).unwrap_or(Typ::TInt)
+                            }
                             Expr::ECall { name: f, .. } => symbol_table
                                 .lookup_function(f)
                                 .and_then(|e| e.return_typ.clone())
@@ -731,7 +761,9 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
                         errs.extend(check_expr(ctx, symbol_table, expr));
                         consume_droppable(ctx, expr);
                     }
-                    Stmt::SFieldAssign { loc, target, expr, .. } => {
+                    Stmt::SFieldAssign {
+                        loc, target, expr, ..
+                    } => {
                         errs.extend(check_expr(ctx, symbol_table, target));
                         errs.extend(check_expr(ctx, symbol_table, expr));
                     }

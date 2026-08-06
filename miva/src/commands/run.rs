@@ -94,10 +94,11 @@ pub fn exec(verbose: bool, release: bool, mvm: bool, backend_opt: Option<String>
             )
         })?;
 
-        let status = Command::new(&mvm_bin)
-            .arg(&mvm_path)
-            .status()
+        let mut cmd = Command::new(&mvm_bin);
+        cmd.arg(&mvm_path);
+        let output = super::env::run_with_timeout(&mut cmd, "mvm interpreter", false)
             .map_err(|e| anyhow::anyhow!("failed to run mvm: {}", e))?;
+        let status = output.status;
 
         if !status.success() {
             std::process::exit(status.code().unwrap_or(1));
@@ -106,9 +107,10 @@ pub fn exec(verbose: bool, release: bool, mvm: bool, backend_opt: Option<String>
         // For native backends (CXX, LLVM), run the compiled binary
         let exe_path = build_dir.join(name);
 
-        let status = std::process::Command::new(&exe_path)
-            .status()
+        let mut cmd = std::process::Command::new(&exe_path);
+        let output = super::env::run_with_timeout(&mut cmd, "compiled program", false)
             .map_err(|e| anyhow::anyhow!("failed to execute {}: {}", exe_path.display(), e))?;
+        let status = output.status;
 
         if !status.success() {
             std::process::exit(status.code().unwrap_or(1));

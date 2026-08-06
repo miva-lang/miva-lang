@@ -103,9 +103,9 @@ pub(crate) fn compile_file_to_src(
     let output = codegen::build_ir_with_backend(&defs, backend, func_sigs);
 
     std::fs::create_dir_all(
-        src_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine parent directory of {:?}", src_path))?,
+        src_path.parent().ok_or_else(|| {
+            anyhow::anyhow!("cannot determine parent directory of {:?}", src_path)
+        })?,
     )?;
     std::fs::write(&src_path, &output.program)?;
 
@@ -155,6 +155,15 @@ pub(crate) fn include_flag(dir: &[&Path]) -> Result<Vec<String>> {
     Ok(flag)
 }
 
+/// The build directory only ever holds the output binary and generated headers
+/// the *project itself* consumes. Exposing it as `-I` lets an `#include <tuple>`
+/// resolve to a stray `build/debug/tuple` executable (same name as the C++
+/// standard header), making g++ parse a binary and hang for minutes. `-iquote`
+/// limits it to `#include "..."` forms so system `<...>` headers never collide.
+pub(crate) fn include_build_dir(build_dir: &Path) -> Result<Vec<String>> {
+    Ok(vec![format!("-iquote{}", path_to_str(build_dir)?)])
+}
+
 pub(crate) fn compile_src_to_obj(
     src_path: &Path,
     cache_dir: &Path,
@@ -173,7 +182,8 @@ pub(crate) fn compile_src_to_obj(
             let opt_flag = if release { "-O2" } else { "-g" };
             let pic_flag = if project_type == "lib" { "-fPIC" } else { "" };
             let inc_flags = env::get_include_flags();
-            let mut include = include_flag(&[cache_dir, std_include, build_dir])?;
+            let mut include = include_flag(&[cache_dir, std_include])?;
+            include.extend(include_build_dir(build_dir)?);
             for extra in extra_includes {
                 include.push(format!("-I{}", extra.to_string_lossy()));
             }
@@ -205,8 +215,7 @@ pub(crate) fn compile_src_to_obj(
             if !verbose {
                 cmd.stderr(std::process::Stdio::null());
             }
-            let compile_output = cmd
-                .output()
+            let compile_output = env::run_with_timeout(&mut cmd, "g++", true)
                 .map_err(|e| anyhow::anyhow!("Failed to run g++: {}", e))?;
 
             if !compile_output.status.success() {
@@ -227,15 +236,15 @@ pub(crate) fn compile_src_to_obj(
 
             Ok(obj_path)
         }
-            Backend::Llvm => {
-            let llc_output = Command::new("llc")
-                .args([
-                    "-filetype=obj",
-                    path_to_str(src_path)?,
-                    "-o",
-                    path_to_str(&obj_path)?,
-                ])
-                .output()
+        Backend::Llvm => {
+            let mut cmd = Command::new("llc");
+            cmd.args([
+                "-filetype=obj",
+                path_to_str(src_path)?,
+                "-o",
+                path_to_str(&obj_path)?,
+            ]);
+            let llc_output = env::run_with_timeout(&mut cmd, "llc", true)
                 .map_err(|e| anyhow::anyhow!("Failed to run llc: {}", e))?;
 
             if !llc_output.status.success() {
@@ -256,9 +265,9 @@ pub(crate) fn compile_src_to_obj(
 
             Ok(obj_path)
         }
-            Backend::Mvm => {
-                anyhow::bail!("compile_src_to_obj should not be called for MVM backend");
-            }
+        Backend::Mvm => {
+            anyhow::bail!("compile_src_to_obj should not be called for MVM backend");
+        }
     }
 }
 
@@ -300,9 +309,9 @@ pub(crate) fn link_objects(
         }
     }
 
-    let output = Command::new("g++")
-        .args(&args)
-        .output()
+    let mut cmd = Command::new("g++");
+    cmd.args(&args);
+    let output = env::run_with_timeout(&mut cmd, "g++ (linking)", true)
         .map_err(|e| anyhow::anyhow!("Failed to run g++ for linking: {}", e))?;
 
     if !output.status.success() {
@@ -327,7 +336,8 @@ pub(crate) fn compile_bridge_obj(
 ) -> Result<()> {
     let opt_flag = if release { "-O2" } else { "-g" };
     let inc_flags = env::get_include_flags();
-    let mut include = include_flag(&[cache_dir, std_include_dir, build_dir])?;
+    let mut include = include_flag(&[cache_dir, std_include_dir])?;
+    include.extend(include_build_dir(build_dir)?);
     for extra in dep_include_dirs {
         include.push(format!("-I{}", extra.to_string_lossy()));
     }
@@ -343,13 +353,16 @@ pub(crate) fn compile_bridge_obj(
     for flag in &include {
         args.push(flag.clone());
     }
-    let bridge_output = Command::new("g++")
-        .args(&args)
-        .output()
+    let mut cmd = Command::new("g++");
+    cmd.args(&args);
+    let bridge_output = env::run_with_timeout(&mut cmd, "g++ (bridge)", true)
         .map_err(|e| anyhow::anyhow!("Failed to compile bridge: {}", e))?;
     if !bridge_output.status.success() {
         let stderr = String::from_utf8_lossy(&bridge_output.stderr);
-        eprintln!("{}", color::error(&format!("bridge compilation failed:\n{}", stderr)));
+        eprintln!(
+            "{}",
+            color::error(&format!("bridge compilation failed:\n{}", stderr))
+        );
         if verbose {
             eprintln!("{:?}", args);
         }

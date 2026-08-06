@@ -75,7 +75,10 @@ pub fn cxx_type(typ: &Typ) -> String {
             }
         }
         Typ::TTuple { elems } => {
-            format!("std::tuple<{}>", elems.iter().map(cxx_type).collect::<Vec<_>>().join(", "))
+            format!(
+                "std::tuple<{}>",
+                elems.iter().map(cxx_type).collect::<Vec<_>>().join(", ")
+            )
         }
         // TShape is a compile-time-only type; it should be erased before codegen.
         Typ::TShape { name } => name.clone(),
@@ -85,7 +88,14 @@ pub fn cxx_type(typ: &Typ) -> String {
 pub(crate) fn cxx_param(param: &Param) -> String {
     match param {
         Param::PRef { name, typ } => format!("{} const& {}", cxx_type(typ), mangle_cpp_kw(name)),
-        Param::POwn { name, typ } => format!("{} {}", cxx_type(typ), mangle_cpp_kw(name)),
+        Param::POwn { name, typ } => {
+            let typ_str = cxx_type(typ);
+            if matches!(typ, Typ::TFunc { .. }) {
+                format!("{} const& {}", typ_str, mangle_cpp_kw(name))
+            } else {
+                format!("{} {}", typ_str, mangle_cpp_kw(name))
+            }
+        }
     }
 }
 
@@ -115,19 +125,40 @@ pub(crate) fn cxx_func_decl(name: &str, params: &[Param], ret: &Option<Typ>) -> 
             .join(", ");
         format!("template<{}>\n", params_str)
     };
-    format!("{}{} {}({});\n", template, ret_type, mangle_cpp_kw(name), param_list.join(", "))
+    format!(
+        "{}{} {}({});\n",
+        template,
+        ret_type,
+        mangle_cpp_kw(name),
+        param_list.join(", ")
+    )
 }
 
 /// Recursively collect `TGenericParam` names from a type.
-pub(crate) fn collect_generic_params(typ: &Typ, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
+pub(crate) fn collect_generic_params(
+    typ: &Typ,
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<String>,
+) {
     match typ {
         Typ::TGenericParam { name } => {
             if seen.insert(name.clone()) {
                 out.push(name.clone());
             }
         }
-        Typ::TStruct { name, fields, type_args } => {
-            if fields.is_empty() && type_args.is_empty() && name.len() == 1 && name.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+        Typ::TStruct {
+            name,
+            fields,
+            type_args,
+        } => {
+            if fields.is_empty()
+                && type_args.is_empty()
+                && name.len() == 1
+                && name
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_ascii_uppercase())
+            {
                 if seen.insert(name.clone()) {
                     out.push(name.clone());
                 }
@@ -168,14 +199,13 @@ pub(crate) fn mangle_cpp_kw(name: &str) -> String {
     let prefix = &name[..last_seg_start];
     let tail = &name[last_seg_start..];
     let mangled_tail = match tail {
-        "new" | "delete" | "class" | "template" | "typename" | "operator"
-        | "public" | "private" | "protected" | "virtual" | "namespace"
-        | "using" | "struct" | "enum" | "union" | "typedef" | "auto"
-        | "static" | "extern" | "const" | "volatile" | "register" | "inline"
-        | "friend" | "this" | "throw" | "try" | "catch" | "goto" | "return"
-        | "break" | "continue" | "if" | "else" | "while" | "for" | "switch"
-        | "case" | "default" | "do" | "sizeof" | "and" | "or" | "not"
-        | "xor" | "bitand" | "bitor" | "compl" | "true" | "false" => {
+        "new" | "delete" | "class" | "template" | "typename" | "operator" | "public"
+        | "private" | "protected" | "virtual" | "namespace" | "using" | "struct" | "enum"
+        | "union" | "typedef" | "auto" | "static" | "extern" | "const" | "volatile"
+        | "register" | "inline" | "friend" | "this" | "throw" | "try" | "catch" | "goto"
+        | "return" | "break" | "continue" | "if" | "else" | "while" | "for" | "switch" | "case"
+        | "default" | "do" | "sizeof" | "and" | "or" | "not" | "xor" | "bitand" | "bitor"
+        | "compl" | "true" | "false" => {
             format!("mvp_{}", tail)
         }
         _ => tail.to_string(),

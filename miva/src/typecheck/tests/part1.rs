@@ -79,7 +79,10 @@ fn test_inferred_droppable_generic_arg_is_e0036() {
                             name: "File".to_string(),
                             fields: vec![ValueField {
                                 name: "id".to_string(),
-                                value: Expr::EInt { loc: loc(), value: 1 },
+                                value: Expr::EInt {
+                                    loc: loc(),
+                                    value: 1,
+                                },
                             }],
                             type_args: vec![],
                         }),

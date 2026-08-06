@@ -52,7 +52,12 @@ pub(crate) fn make_cache_key(file: &str, std_path: &str) -> String {
     }
 }
 
-pub(crate) fn needs_rebuild_by_hash(file: &str, cache_dir: &Path, cache_key: &str, backend: Backend) -> bool {
+pub(crate) fn needs_rebuild_by_hash(
+    file: &str,
+    cache_dir: &Path,
+    cache_key: &str,
+    backend: Backend,
+) -> bool {
     let hash_path = env::hash_file_path(&cache_dir.to_path_buf(), cache_key);
     let current_hash = env::compute_sha256(file);
 

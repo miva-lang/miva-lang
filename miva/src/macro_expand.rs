@@ -152,7 +152,12 @@ fn expand_stmt(stmt: &Stmt, addf: &mut Vec<Def>, macro_table: &MacroTable) -> Re
             name: name.clone(),
             expr: Box::new(expand_expr(expr, addf, macro_table)?),
         }),
-        Stmt::SFieldAssign { loc, target, field, expr } => Ok(Stmt::SFieldAssign {
+        Stmt::SFieldAssign {
+            loc,
+            target,
+            field,
+            expr,
+        } => Ok(Stmt::SFieldAssign {
             loc: loc.clone(),
             target: Box::new(expand_expr(target, addf, macro_table)?),
             field: field.clone(),
@@ -382,7 +387,7 @@ fn expand_expr(expr: &Expr, addf: &mut Vec<Def>, macro_table: &MacroTable) -> Re
         | Expr::EFloat { .. }
         | Expr::EChar { .. }
         | Expr::EString { .. }
-        |         Expr::EVar { .. }
+        | Expr::EVar { .. }
         | Expr::EMove { .. }
         | Expr::EClone { .. }
         | Expr::EVoid { .. }
@@ -675,7 +680,12 @@ fn substitute_stmt_vars(stmt: &Stmt, args: &[Expr], param_names: &[&str]) -> Stm
             name: name.clone(),
             expr: Box::new(substitute_macro_vars(expr, args, param_names)),
         },
-        Stmt::SFieldAssign { loc, target, field, expr } => Stmt::SFieldAssign {
+        Stmt::SFieldAssign {
+            loc,
+            target,
+            field,
+            expr,
+        } => Stmt::SFieldAssign {
             loc: loc.clone(),
             target: Box::new(substitute_macro_vars(target, args, param_names)),
             field: field.clone(),

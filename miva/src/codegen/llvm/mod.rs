@@ -48,7 +48,11 @@ pub(crate) fn make_global_name(module: Option<&str>, func: &str) -> String {
     match module {
         Some(m) => {
             let prefix = module_parts(m);
-            let all: Vec<String> = prefix.iter().cloned().chain(std::iter::once(func.to_string())).collect();
+            let all: Vec<String> = prefix
+                .iter()
+                .cloned()
+                .chain(std::iter::once(func.to_string()))
+                .collect();
             all.join("_")
         }
         None => func.to_string(),
@@ -60,25 +64,29 @@ pub(crate) fn collect_struct_types(defs: &[Def]) -> Vec<String> {
     for def in defs {
         match def {
             Def::DStruct { name, fields, .. } => {
-                let field_types: Vec<String> = fields.iter().map(|f| {
-                    match &f.typ {
+                let field_types: Vec<String> = fields
+                    .iter()
+                    .map(|f| match &f.typ {
                         Typ::TInt => "i64",
                         Typ::TBool | Typ::TChar => "i8",
                         Typ::TFloat64 | Typ::TFloat32 => "double",
                         _ => "i64",
-                    }
-                }).map(|s| s.to_string()).collect();
+                    })
+                    .map(|s| s.to_string())
+                    .collect();
                 types.push(format!("%{} = type {{ {} }}", name, field_types.join(", ")));
             }
             Def::DShape { name, fields, .. } => {
-                let field_types: Vec<String> = fields.iter().map(|f| {
-                    match &f.typ {
+                let field_types: Vec<String> = fields
+                    .iter()
+                    .map(|f| match &f.typ {
                         Typ::TInt => "i64",
                         Typ::TBool | Typ::TChar => "i8",
                         Typ::TFloat64 | Typ::TFloat32 => "double",
                         _ => "i64",
-                    }
-                }).map(|s| s.to_string()).collect();
+                    })
+                    .map(|s| s.to_string())
+                    .collect();
                 types.push(format!("%{} = type {{ {} }}", name, field_types.join(", ")));
             }
             Def::DModule { .. } => {
@@ -96,13 +104,17 @@ pub(crate) fn build_struct_field_map(defs: &[Def]) -> HashMap<String, HashMap<St
     for def in defs {
         match def {
             Def::DStruct { name, fields, .. } => {
-                let field_idx: HashMap<String, usize> = fields.iter().enumerate()
+                let field_idx: HashMap<String, usize> = fields
+                    .iter()
+                    .enumerate()
                     .map(|(i, f)| (f.name.clone(), i))
                     .collect();
                 map.insert(name.clone(), field_idx);
             }
             Def::DShape { name, fields, .. } => {
-                let field_idx: HashMap<String, usize> = fields.iter().enumerate()
+                let field_idx: HashMap<String, usize> = fields
+                    .iter()
+                    .enumerate()
                     .map(|(i, f)| (f.name.clone(), i))
                     .collect();
                 map.insert(name.clone(), field_idx);
@@ -124,13 +136,15 @@ pub(crate) fn build_struct_field_types(defs: &[Def]) -> HashMap<String, HashMap<
     for def in defs {
         match def {
             Def::DStruct { name, fields, .. } => {
-                let field_types: HashMap<String, Typ> = fields.iter()
+                let field_types: HashMap<String, Typ> = fields
+                    .iter()
                     .map(|f| (f.name.clone(), f.typ.clone()))
                     .collect();
                 map.insert(name.clone(), field_types);
             }
             Def::DShape { name, fields, .. } => {
-                let field_types: HashMap<String, Typ> = fields.iter()
+                let field_types: HashMap<String, Typ> = fields
+                    .iter()
                     .map(|f| (f.name.clone(), f.typ.clone()))
                     .collect();
                 map.insert(name.clone(), field_types);
@@ -350,7 +364,11 @@ pub(crate) fn map_builtin(name: &str, current_module: Option<&str>) -> String {
                 let full = match current_module {
                     Some(m) => {
                         let mp = module_parts(m);
-                        let all: Vec<String> = mp.iter().cloned().chain(std::iter::once(name.to_string())).collect();
+                        let all: Vec<String> = mp
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(name.to_string()))
+                            .collect();
                         all.join("_")
                     }
                     None => name.to_string(),
@@ -497,33 +515,54 @@ impl LlvmCtx {
     }
 
     fn get_var_addr(&self, name: &str) -> String {
-        self.var_addrs.get(name).cloned().unwrap_or_else(|| {
-            panic!("get_var_addr: variable '{}' not declared", name)
-        })
+        self.var_addrs
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("get_var_addr: variable '{}' not declared", name))
     }
 
     fn get_var_reload(&self, name: &str) -> String {
-        self.var_reloads.get(name).map(|n| format!("%{}", n)).unwrap_or_else(|| {
-            panic!("get_var_reload: variable '{}' not declared", name)
-        })
+        self.var_reloads
+            .get(name)
+            .map(|n| format!("%{}", n))
+            .unwrap_or_else(|| panic!("get_var_reload: variable '{}' not declared", name))
     }
 }
 
 /// Check if an expression likely evaluates to a string value.
-pub fn build_ir(defs: &[Def], func_sigs: &HashMap<String, crate::codegen::FuncSig>) -> crate::codegen::GeneratedOutput {
+pub fn build_ir(
+    defs: &[Def],
+    func_sigs: &HashMap<String, crate::codegen::FuncSig>,
+) -> crate::codegen::GeneratedOutput {
     *EXTERN_DECLS.lock().unwrap() = Some(HashSet::new());
     *CLOSURE_THUNK_DEFS.lock().unwrap() = Some(String::new());
     CLOSURE_THUNK_ID.store(0, Ordering::Relaxed);
     let struct_types = collect_struct_types(defs);
     let struct_field_map = build_struct_field_map(defs);
     let struct_field_types = build_struct_field_types(defs);
-    let (struct_defs, defs_str, main_functions, defined) = generate_with_scope(defs, None, &struct_field_map, &struct_field_types, func_sigs);
+    let (struct_defs, defs_str, main_functions, defined) = generate_with_scope(
+        defs,
+        None,
+        &struct_field_map,
+        &struct_field_types,
+        func_sigs,
+    );
 
     // Collect user DCFuncUnsafe definitions for libhost.c generation
     let mut host_defs: Vec<crate::codegen::mvm::HostDef> = Vec::new();
     for def in defs {
-        if let Def::DCFuncUnsafe { name, params, returns, code, .. } = def {
-            if !host_defs.iter().any(|h: &crate::codegen::mvm::HostDef| h.name == *name) {
+        if let Def::DCFuncUnsafe {
+            name,
+            params,
+            returns,
+            code,
+            ..
+        } = def
+        {
+            if !host_defs
+                .iter()
+                .any(|h: &crate::codegen::mvm::HostDef| h.name == *name)
+            {
                 host_defs.push(crate::codegen::mvm::HostDef {
                     name: name.clone(),
                     arity: params.len() as u32,
@@ -542,13 +581,20 @@ pub fn build_ir(defs: &[Def], func_sigs: &HashMap<String, crate::codegen::FuncSi
     program.push_str("%mvp_builtin_box = type opaque\n");
     program.push_str("%MivaValue = type { i64, i64 }\n\n");
 
-    for st in &struct_types { program.push_str(&st); program.push_str("\n"); }
+    for st in &struct_types {
+        program.push_str(&st);
+        program.push_str("\n");
+    }
 
     program.push_str(&runtime_declarations());
     if let Ok(guard) = EXTERN_DECLS.lock() {
         if let Some(decls) = guard.as_ref() {
             for decl in decls.iter() {
-                let name = decl.trim_start_matches("declare i64 @").split('(').next().unwrap_or("");
+                let name = decl
+                    .trim_start_matches("declare i64 @")
+                    .split('(')
+                    .next()
+                    .unwrap_or("");
                 if !defined.contains(name) {
                     program.push_str(&format!("{}\n", decl));
                 }
@@ -567,11 +613,20 @@ pub fn build_ir(defs: &[Def], func_sigs: &HashMap<String, crate::codegen::FuncSi
 
     // Declare miva_host_* functions (from libhost.c) for inline unsafe functions
     for hd in &host_defs {
-        program.push_str(&format!("declare %MivaValue @miva_host_{}(ptr, i32)\n", hd.name));
+        program.push_str(&format!(
+            "declare %MivaValue @miva_host_{}(ptr, i32)\n",
+            hd.name
+        ));
     }
 
     let test_ir = generate_test(defs);
     let bridge = generate_bridge(defs);
 
-    crate::codegen::GeneratedOutput { program: program.into_bytes(), header: bridge, test: test_ir, extension: "ll", host_defs }
+    crate::codegen::GeneratedOutput {
+        program: program.into_bytes(),
+        header: bridge,
+        test: test_ir,
+        extension: "ll",
+        host_defs,
+    }
 }

@@ -102,7 +102,11 @@ pub(crate) fn resolve_type(typ: &Typ, subst: &HashMap<String, Typ>) -> Typ {
 }
 
 /// Infer type param bindings from actual argument types.
-pub(crate) fn infer_type_from_arg(param_typ: &Typ, arg_typ: &Typ, subst: &mut HashMap<String, Typ>) {
+pub(crate) fn infer_type_from_arg(
+    param_typ: &Typ,
+    arg_typ: &Typ,
+    subst: &mut HashMap<String, Typ>,
+) {
     match (param_typ, arg_typ) {
         (Typ::TGenericParam { name }, _) => {
             if !subst.contains_key(name) {
@@ -125,9 +129,16 @@ pub(crate) fn infer_type_from_arg(param_typ: &Typ, arg_typ: &Typ, subst: &mut Ha
                 infer_type_from_arg(pt, at, subst);
             }
         }
-        (Typ::TFunc { params: pp, returns: pr }, Typ::TFunc { params: ap, returns: ar })
-            if pp.len() == ap.len() =>
-        {
+        (
+            Typ::TFunc {
+                params: pp,
+                returns: pr,
+            },
+            Typ::TFunc {
+                params: ap,
+                returns: ar,
+            },
+        ) if pp.len() == ap.len() => {
             for (pt, at) in pp.iter().zip(ap.iter()) {
                 infer_type_from_arg(pt, at, subst);
             }

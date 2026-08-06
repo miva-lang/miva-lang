@@ -1,51 +1,46 @@
 module main;
 
-// Basic tuple creation and field access
 pair = (x: int, y: int): (int, int) => {
-    return (x, y)
+    return (x, y);
 }
 
-// Tuple with mixed types
 mixed = (): (int, bool, string) => {
-    return (1, true, "hello")
+    return (1, true, "hello");
 }
 
-// Nested tuple
 nested = (): (int, (bool, string)) => {
-    return (1, (true, "nested"))
+    return (1, (true, "nested"));
 }
 
-// Tuple as function argument
 sum_pair = (p: (int, int)): int => {
-    return p.0 + p.1
+    return p.0 + p.1;
 }
 
-// Tuple comparison
 compare = (a: (int, bool), b: (int, bool)): bool => {
-    return a == b
+    return a == b;
 }
 
 main = () => {
-    let p = pair(10, 20)
-    printlns!("pair.0 =", p.0)
-    printlns!("pair.1 =", p.1)
+    let p = pair(10, 20);
+    printlns!("pair.0 =", p.0);
+    printlns!("pair.1 =", p.1);
 
-    let m = mixed()
-    printlns!("mixed.0 =", m.0)
-    printlns!("mixed.1 =", m.1)
-    printlns!("mixed.2 =", m.2)
+    let m = mixed();
+    printlns!("mixed.0 =", m.0);
+    printlns!("mixed.1 =", m.1);
+    printlns!("mixed.2 =", m.2);
 
-    let n = nested()
-    printlns!("nested.0 =", n.0)
-    printlns!("nested.1.0 =", n.1.0)
-    printlns!("nested.1.1 =", n.1.1)
+    let n = nested();
+    printlns!("nested.0 =", n.0);
+    printlns!("nested.1.0 =", n.1.0);
+    printlns!("nested.1.1 =", n.1.1);
 
-    let s = sum_pair((5, 3))
-    printlns!("sum =", s)
+    let result = sum_pair((5, 3));
+    printlns!("sum =", result);
 
-    let c = compare((1, true), (1, true))
-    printlns!("compare =", c)
+    let c = compare((1, true), (1, true));
+    printlns!("compare =", c);
 
-    let ne = compare((1, true), (2, false))
-    printlns!("not equal =", ne)
+    let ne = compare((1, true), (2, false));
+    printlns!("not equal =", ne);
 }

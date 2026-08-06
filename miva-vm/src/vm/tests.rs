@@ -1,5 +1,5 @@
 use super::*;
-use crate::host::{MivaValue, HostFn};
+use crate::host::{HostFn, MivaValue};
 
 // Host fn: returns args[0] + 1.
 unsafe extern "C" fn host_add_one(args: *const MivaValue, _argc: i32) -> MivaValue {
@@ -21,9 +21,13 @@ fn call_host_registered_fn() {
 
     let program = MvmProgram {
         strings: vec!["add_one".to_string()],
-        functions: vec![
-            MvmFunction { name_idx: 0, arity: 0, locals: 0, is_async: false, code },
-        ],
+        functions: vec![MvmFunction {
+            name_idx: 0,
+            arity: 0,
+            locals: 0,
+            is_async: false,
+            code,
+        }],
     };
 
     let mut vm = Mvm::new(program);
@@ -40,7 +44,13 @@ use crate::error::TrapKind;
 fn program_with_main(code: Vec<u8>) -> MvmProgram {
     MvmProgram {
         strings: vec!["main".to_string()],
-        functions: vec![MvmFunction { name_idx: 0, arity: 0, locals: 0, is_async: false, code }],
+        functions: vec![MvmFunction {
+            name_idx: 0,
+            arity: 0,
+            locals: 0,
+            is_async: false,
+            code,
+        }],
     }
 }
 
@@ -54,8 +64,20 @@ fn to_bytes_from_bytes_round_trip() {
     let program = MvmProgram {
         strings: vec!["main".to_string(), "hello".to_string()],
         functions: vec![
-            MvmFunction { name_idx: 0, arity: 0, locals: 2, is_async: false, code: vec![1, 2, 3] },
-            MvmFunction { name_idx: 1, arity: 3, locals: 5, is_async: true, code: vec![] },
+            MvmFunction {
+                name_idx: 0,
+                arity: 0,
+                locals: 2,
+                is_async: false,
+                code: vec![1, 2, 3],
+            },
+            MvmFunction {
+                name_idx: 1,
+                arity: 3,
+                locals: 5,
+                is_async: true,
+                code: vec![],
+            },
         ],
     };
     let bytes = program.to_bytes();
@@ -88,7 +110,13 @@ fn from_bytes_rejects_truncated_data() {
 fn from_bytes_rejects_bad_name_index() {
     let program = MvmProgram {
         strings: vec!["main".to_string()],
-        functions: vec![MvmFunction { name_idx: 9, arity: 0, locals: 0, is_async: false, code: vec![] }],
+        functions: vec![MvmFunction {
+            name_idx: 9,
+            arity: 0,
+            locals: 0,
+            is_async: false,
+            code: vec![],
+        }],
     };
     let err = MvmProgram::from_bytes(&program.to_bytes()).unwrap_err();
     assert_eq!(err.kind, TrapKind::InvalidBytecode);

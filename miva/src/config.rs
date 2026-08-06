@@ -72,8 +72,11 @@ mod tests {
     fn test_config_project_name() {
         let dir = std::env::temp_dir().join("miva_test_name");
         let _ = std::fs::create_dir_all(&dir);
-        write_config(&dir, r#"[project]
-name = "myapp""#);
+        write_config(
+            &dir,
+            r#"[project]
+name = "myapp""#,
+        );
         let orig_dir = std::env::current_dir().unwrap();
         let _ = std::env::set_current_dir(&dir);
         let result = Config::project_name();
@@ -86,14 +89,17 @@ name = "myapp""#);
     fn test_config_dependencies() {
         let dir = std::env::temp_dir().join("miva_test_deps");
         let _ = std::fs::create_dir_all(&dir);
-        write_config(&dir, r#"
+        write_config(
+            &dir,
+            r#"
 [project]
 name = "myapp"
 
 [dependencies]
 std = "0.1.3"
 json = "0.1.3"
-"#);
+"#,
+        );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
         let deps = config.dependencies();
         assert_eq!(deps.get("std"), Some(&"0.1.3".to_string()));
@@ -105,8 +111,11 @@ json = "0.1.3"
     fn test_config_empty_dependencies() {
         let dir = std::env::temp_dir().join("miva_test_empty_deps");
         let _ = std::fs::create_dir_all(&dir);
-        write_config(&dir, r#"[project]
-name = "myapp""#);
+        write_config(
+            &dir,
+            r#"[project]
+name = "myapp""#,
+        );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
         let deps = config.dependencies();
         assert!(deps.is_empty());
@@ -117,9 +126,12 @@ name = "myapp""#);
     fn test_config_project_backend() {
         let dir = std::env::temp_dir().join("miva_test_backend");
         let _ = std::fs::create_dir_all(&dir);
-        write_config(&dir, r#"[project]
+        write_config(
+            &dir,
+            r#"[project]
 name = "myapp"
-backend = "llvm""#);
+backend = "llvm""#,
+        );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
         assert_eq!(config.project_backend(), Some("llvm".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -129,11 +141,17 @@ backend = "llvm""#);
     fn test_config_project_type() {
         let dir = std::env::temp_dir().join("miva_test_type");
         let _ = std::fs::create_dir_all(&dir);
-        write_config(&dir, r#"[project]
+        write_config(
+            &dir,
+            r#"[project]
 name = "mylib"
-type = "lib""#);
+type = "lib""#,
+        );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
-        assert_eq!(config.project.as_ref().unwrap().project_type, Some("lib".to_string()));
+        assert_eq!(
+            config.project.as_ref().unwrap().project_type,
+            Some("lib".to_string())
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -141,8 +159,11 @@ type = "lib""#);
     fn test_config_no_project() {
         let dir = std::env::temp_dir().join("miva_test_no_project");
         let _ = std::fs::create_dir_all(&dir);
-        write_config(&dir, r#"[dependencies]
-std = "0.1.3""#);
+        write_config(
+            &dir,
+            r#"[dependencies]
+std = "0.1.3""#,
+        );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
         assert!(config.project.is_none());
         assert_eq!(config.project_backend(), None);

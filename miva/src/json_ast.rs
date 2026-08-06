@@ -23,7 +23,9 @@ mod tests {
         let result = from_str(json).unwrap();
         assert_eq!(result.defs.len(), 1);
         match &result.defs[0] {
-            Def::DFunc { name, body, safety, .. } => {
+            Def::DFunc {
+                name, body, safety, ..
+            } => {
                 assert_eq!(name, "foo");
                 assert!(matches!(safety, Safety::Safe));
                 match body.as_ref() {
@@ -65,7 +67,9 @@ mod tests {
             Def::DFunc { body, .. } => match body.as_ref() {
                 Expr::EBlock { stmts, .. } => {
                     assert_eq!(stmts.len(), 1);
-                    assert!(matches!(&stmts[0], Stmt::SLetTuple { patterns, .. } if patterns.len() == 2));
+                    assert!(
+                        matches!(&stmts[0], Stmt::SLetTuple { patterns, .. } if patterns.len() == 2)
+                    );
                 }
                 _ => panic!("expected EBlock"),
             },
@@ -115,11 +119,16 @@ mod tests {
         let result = from_str(json).unwrap();
         match &result.defs[0] {
             Def::DFunc { body, .. } => match body.as_ref() {
-                Expr::EIf { cond, then, else_, .. } => {
+                Expr::EIf {
+                    cond, then, else_, ..
+                } => {
                     assert!(matches!(cond.as_ref(), Expr::EBool { value: true, .. }));
                     assert!(matches!(then.as_ref(), Expr::EInt { value: 1, .. }));
                     assert!(else_.is_some());
-                    assert!(matches!(else_.as_ref().unwrap().as_ref(), Expr::EInt { value: 0, .. }));
+                    assert!(matches!(
+                        else_.as_ref().unwrap().as_ref(),
+                        Expr::EInt { value: 0, .. }
+                    ));
                 }
                 _ => panic!("expected EIf"),
             },
@@ -163,7 +172,9 @@ mod tests {
         let result = from_str(json).unwrap();
         match &result.defs[0] {
             Def::DFunc { body, .. } => match body.as_ref() {
-                Expr::EBinOp { op, left, right, .. } => {
+                Expr::EBinOp {
+                    op, left, right, ..
+                } => {
                     assert!(matches!(op, BinOp::Add));
                     assert!(matches!(left.as_ref(), Expr::EVar { name, .. } if name == "a"));
                     assert!(matches!(right.as_ref(), Expr::EVar { name, .. } if name == "b"));
@@ -193,7 +204,9 @@ mod tests {
         let json = r#"{"defs":[{"kind":"impl","loc":{"line":1,"col":1},"struct":"MyStruct","impls":[{"op":"op_add","func":"my_add","loc":{"line":1,"col":10}}]}],"files":["test.miva"]}"#;
         let result = from_str(json).unwrap();
         match &result.defs[0] {
-            Def::DImpl { struct_name, impls, .. } => {
+            Def::DImpl {
+                struct_name, impls, ..
+            } => {
                 assert_eq!(struct_name, "MyStruct");
                 assert_eq!(impls.len(), 1);
                 assert!(matches!(impls[0].op, ImplOp::ImAdd));
@@ -239,7 +252,9 @@ mod tests {
         let result = from_str(json).unwrap();
         match &result.defs[0] {
             Def::DFunc { body, .. } => match body.as_ref() {
-                Expr::EFor { var, range, body, .. } => {
+                Expr::EFor {
+                    var, range, body, ..
+                } => {
                     assert_eq!(var, "i");
                     assert!(matches!(range.as_ref(), Expr::EInt { value: 10, .. }));
                     assert!(matches!(body.as_ref(), Expr::EVoid { .. }));
@@ -279,4 +294,3 @@ mod tests {
         }
     }
 }
-

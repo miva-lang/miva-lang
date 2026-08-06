@@ -19,7 +19,14 @@ pub fn droppable_typ_name(t: &Typ) -> String {
         Typ::TStruct { name, .. } => name.clone(),
         Typ::TArray { of } => format!("[{}]", droppable_typ_name(of)),
         Typ::TTuple { elems } => {
-            format!("({})", elems.iter().map(|e| droppable_typ_name(e)).collect::<Vec<_>>().join(", "))
+            format!(
+                "({})",
+                elems
+                    .iter()
+                    .map(|e| droppable_typ_name(e))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         }
         _ => "?".to_string(),
     }
@@ -36,9 +43,7 @@ pub fn compute_droppable(defs: &[Def]) -> HashSet<String> {
         .filter_map(|d| match d {
             Def::DImpl {
                 struct_name, impls, ..
-            } if impls.iter().any(|i| matches!(i.op, ImplOp::ImDrop)) => {
-                Some(struct_name.clone())
-            }
+            } if impls.iter().any(|i| matches!(i.op, ImplOp::ImDrop)) => Some(struct_name.clone()),
             _ => None,
         })
         .collect();

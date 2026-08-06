@@ -126,9 +126,8 @@ impl Parser {
                 }
                 if j < chars.len() {
                     let ent: String = chars[i + 1..j].iter().collect();
-                    let decoded = if let Some(num) = ent
-                        .strip_prefix("#x")
-                        .or_else(|| ent.strip_prefix("#X"))
+                    let decoded = if let Some(num) =
+                        ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X"))
                     {
                         u32::from_str_radix(num, 16)
                             .ok()
