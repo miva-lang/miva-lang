@@ -116,6 +116,15 @@ fn expand_def(def: &Def, addf: &mut Vec<Def>, macro_table: &MacroTable) -> Resul
 
 fn expand_stmt(stmt: &Stmt, addf: &mut Vec<Def>, macro_table: &MacroTable) -> Result<Stmt> {
     match stmt {
+        Stmt::SLetTuple {
+            loc,
+            patterns,
+            expr,
+        } => Ok(Stmt::SLetTuple {
+            loc: loc.clone(),
+            patterns: patterns.clone(),
+            expr: Box::new(expand_expr(expr, addf, macro_table)?),
+        }),
         Stmt::SLet {
             loc,
             mutable,
@@ -324,6 +333,16 @@ fn expand_expr(expr: &Expr, addf: &mut Vec<Def>, macro_table: &MacroTable) -> Re
                 .map(|v| expand_expr(v, addf, macro_table))
                 .collect::<Result<Vec<_>>>()?;
             Ok(Expr::EArrayLit {
+                loc: loc.clone(),
+                values,
+            })
+        }
+        Expr::ETupleLit { loc, values } => {
+            let values = values
+                .iter()
+                .map(|v| expand_expr(v, addf, macro_table))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Expr::ETupleLit {
                 loc: loc.clone(),
                 values,
             })
@@ -568,6 +587,13 @@ fn substitute_macro_vars(expr: &Expr, args: &[Expr], param_names: &[&str]) -> Ex
                 .map(|v| substitute_macro_vars(v, args, param_names))
                 .collect(),
         },
+        Expr::ETupleLit { loc, values } => Expr::ETupleLit {
+            loc: loc.clone(),
+            values: values
+                .iter()
+                .map(|v| substitute_macro_vars(v, args, param_names))
+                .collect(),
+        },
         Expr::EAddr { loc, expr: e } => Expr::EAddr {
             loc: loc.clone(),
             expr: Box::new(substitute_macro_vars(e, args, param_names)),
@@ -613,6 +639,15 @@ fn substitute_macro_vars(expr: &Expr, args: &[Expr], param_names: &[&str]) -> Ex
 
 fn substitute_stmt_vars(stmt: &Stmt, args: &[Expr], param_names: &[&str]) -> Stmt {
     match stmt {
+        Stmt::SLetTuple {
+            loc,
+            patterns,
+            expr,
+        } => Stmt::SLetTuple {
+            loc: loc.clone(),
+            patterns: patterns.clone(),
+            expr: Box::new(substitute_macro_vars(expr, args, param_names)),
+        },
         Stmt::SLet {
             loc,
             mutable,

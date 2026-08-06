@@ -91,6 +91,9 @@ pub fn optimize_expr(expr: IrExpr) -> IrExpr {
         IrExpr::ArrayInit(values) => {
             IrExpr::ArrayInit(values.into_iter().map(optimize_expr).collect())
         }
+        IrExpr::TupleInit(values) => {
+            IrExpr::TupleInit(values.into_iter().map(optimize_expr).collect())
+        }
         IrExpr::StructInit { name, type_args, fields } => {
             IrExpr::StructInit { name, type_args, fields: fields.into_iter().map(|(n, e)| (n, optimize_expr(e))).collect() }
         }

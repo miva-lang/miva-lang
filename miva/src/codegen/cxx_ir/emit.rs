@@ -27,6 +27,10 @@ pub fn emit_expr(expr: &IrExpr, depth: usize, expected_type: Option<&str>) -> St
             let elems: Vec<_> = values.iter().map(|e| emit_expr(e, depth, expected_type)).collect();
             format!("std::vector{{{}}}", elems.join(", "))
         }
+        IrExpr::TupleInit(values) => {
+            let elems: Vec<_> = values.iter().map(|e| emit_expr(e, depth, expected_type)).collect();
+            format!("std::make_tuple({})", elems.join(", "))
+        }
         IrExpr::Cast { expr, to } => {
             let from_int = matches!(expr.as_ref(), IrExpr::Int { .. }) || matches!(expr.as_ref(), IrExpr::Var { .. });
             let is_ptr_cast = matches!(to, Typ::TPtrAny) || from_int && matches!(to, Typ::TPtrAny);
@@ -104,7 +108,8 @@ pub(crate) fn emit_binop(op: &BinOp, left: &IrExpr, right: &IrExpr, depth: usize
 
 pub(crate) fn emit_field_access(expr: &IrExpr, field: &str, depth: usize, expected_type: Option<&str>) -> String {
     if field.chars().all(|c| c.is_ascii_digit()) {
-        format!("{}.__payload.field{}", emit_expr(expr, depth, expected_type), field)
+        let idx: usize = field.parse().unwrap_or(0);
+        format!("std::get<{}>({})", idx, emit_expr(expr, depth, expected_type))
     } else if let IrExpr::Var(enum_name) = expr {
         if enum_name.chars().next().map_or(false, |c| c.is_uppercase()) {
             format!("{}_{}()", enum_name, field)

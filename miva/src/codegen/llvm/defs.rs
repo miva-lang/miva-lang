@@ -2,6 +2,19 @@ use super::*;
 
 pub(crate) fn gen_stmt(stmt: &Stmt, ctx: &mut LlvmCtx, body: &mut String) {
     match stmt {
+        Stmt::SLetTuple { patterns, expr, .. } => {
+            let val = gen_expr(expr, ctx, body);
+            let tuple_addr = ctx.gen_tmp("tpl");
+            body.push_str(&format!("  %{} = alloca i64, align 8\n", tuple_addr));
+            body.push_str(&format!("  store i64 {}, ptr %{}, align 8\n", val, tuple_addr));
+            body.push_str(&format!("  %{} = load i64, ptr %{}, align 8\n", tuple_addr, tuple_addr));
+            for (i, name) in patterns.iter().enumerate() {
+                let (addr, reload) = ctx.declare_var(name);
+                body.push_str(&format!("  %{} = alloca i64, align 8\n", addr));
+                body.push_str(&format!("  %{} = getelementptr i64, ptr {}, i64 {}\n", addr, tuple_addr, i));
+                body.push_str(&format!("  %{} = load i64, ptr %{}, align 8\n", reload, addr));
+            }
+        }
         Stmt::SLet { name, mutable: _, expr, .. } => {
             let val = gen_expr(expr, ctx, body);
             let (addr, reload) = ctx.declare_var(name);

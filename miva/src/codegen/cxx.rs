@@ -74,6 +74,9 @@ pub fn cxx_type(typ: &Typ) -> String {
                 format!("mvp_closure<{}, {}>", r, ps.join(", "))
             }
         }
+        Typ::TTuple { elems } => {
+            format!("std::tuple<{}>", elems.iter().map(cxx_type).collect::<Vec<_>>().join(", "))
+        }
         // TShape is a compile-time-only type; it should be erased before codegen.
         Typ::TShape { name } => name.clone(),
     }
@@ -143,6 +146,11 @@ pub(crate) fn collect_generic_params(typ: &Typ, seen: &mut std::collections::Has
                 collect_generic_params(p, seen, out);
             }
             collect_generic_params(returns, seen, out);
+        }
+        Typ::TTuple { elems } => {
+            for e in elems {
+                collect_generic_params(e, seen, out);
+            }
         }
         _ => {}
     }

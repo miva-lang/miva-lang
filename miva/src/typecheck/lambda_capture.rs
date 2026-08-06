@@ -54,6 +54,12 @@ pub(crate) fn free_vars_inside(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<
                         free_vars_inside(expr, bound, out);
                         bound.push(name.clone());
                     }
+                    Stmt::SLetTuple { patterns, expr, .. } => {
+                        free_vars_inside(expr, bound, out);
+                        for n in patterns {
+                            bound.push(n.clone());
+                        }
+                    }
                     Stmt::SAssign { name, expr, .. } => {
                         if !bound.contains(name) && !out.contains(name) {
                             out.push(name.clone());
@@ -75,6 +81,11 @@ pub(crate) fn free_vars_inside(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<
             }
         }
         Expr::EArrayLit { values, .. } => {
+            for e2 in values {
+                free_vars_inside(e2, bound, out);
+            }
+        }
+        Expr::ETupleLit { values, .. } => {
             for e2 in values {
                 free_vars_inside(e2, bound, out);
             }
@@ -317,6 +328,21 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
             let mut new_stmts = vec![];
             for s in stmts {
                 match s {
+                    Stmt::SLetTuple {
+                        loc,
+                        patterns,
+                        expr,
+                    } => {
+                        let new_expr = annotate_expr(*expr, &child_env);
+                        for name in &patterns {
+                            child_env.insert(name.clone(), expr_simple_typ(&new_expr));
+                        }
+                        new_stmts.push(Stmt::SLetTuple {
+                            loc,
+                            patterns,
+                            expr: Box::new(new_expr),
+                        });
+                    }
                     Stmt::SLet { loc, mutable, name, expr } => {
                         let new_expr = annotate_expr(*expr, &child_env);
                         let vt = expr_simple_typ(&new_expr);
@@ -386,6 +412,13 @@ pub(crate) fn annotate_expr(e: Expr, env: &HashMap<String, Typ>) -> Expr {
                 .map(|v| annotate_expr(v, env))
                 .collect();
             Expr::EArrayLit { loc, values: new_values }
+        }
+        Expr::ETupleLit { loc, values } => {
+            let new_values = values
+                .into_iter()
+                .map(|v| annotate_expr(v, env))
+                .collect();
+            Expr::ETupleLit { loc, values: new_values }
         }
         Expr::EStructLit { loc, name, fields, type_args } => {
             let new_fields = fields

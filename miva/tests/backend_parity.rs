@@ -140,3 +140,8 @@ fn parity_drop_system() {
 fn parity_mutex_guard() {
     assert_backend_parity("mutex-guard");
 }
+
+#[test]
+fn parity_tuple() {
+    assert_backend_parity("tuple");
+}

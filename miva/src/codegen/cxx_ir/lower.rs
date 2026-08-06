@@ -101,6 +101,10 @@ pub(crate) fn lower_expr(ctx: &mut IrContext, expr: &Expr) -> IrExpr {
         Expr::EEnumPattern { .. } => {
             unreachable!("EEnumPattern is handled inline in the EChoose arm")
         }
+        Expr::ETupleLit { values, .. } => {
+            let lowered: Vec<_> = values.iter().map(|v| lower_expr(ctx, v)).collect();
+            IrExpr::TupleInit(lowered)
+        }
         Expr::ELambda { params, ret, captures, body, .. } => {
             let id = ctx.next_id();
             let ret_cxx = cxx_type(ret);
@@ -209,6 +213,25 @@ pub(crate) fn lower_block(ctx: &mut IrContext, expr: &Expr) -> (Vec<IrStmt>, Opt
 
 pub(crate) fn lower_stmt(ctx: &mut IrContext, stmt: &Stmt) -> Vec<IrStmt> {
     match stmt {
+        Stmt::SLetTuple { patterns, expr, .. } => {
+            let tuple_expr = lower_expr(ctx, expr);
+            let mut stmts = vec![IrStmt::Let {
+                mutable: false,
+                name: "__tuple".into(),
+                expr: tuple_expr,
+            }];
+            for (i, name) in patterns.iter().enumerate() {
+                stmts.push(IrStmt::Let {
+                    mutable: false,
+                    name: name.clone(),
+                    expr: IrExpr::FieldAccess {
+                        expr: Box::new(IrExpr::Var("__tuple".into())),
+                        field: i.to_string(),
+                    },
+                });
+            }
+            stmts
+        }
         Stmt::SLet { mutable, name, expr, .. } => {
             vec![IrStmt::Let { mutable: *mutable, name: name.clone(), expr: lower_expr(ctx, expr) }]
         }

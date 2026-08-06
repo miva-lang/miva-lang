@@ -1136,10 +1136,32 @@ pub(crate) fn infer_type(
                     }
                 },
                 _ => {
-                    errs.push(Error::new("E0014", loc, "field access on non-struct type"));
-                    (Typ::TInvalid, errs)
+                    if let Typ::TTuple { elems } = &et {
+                        if let Ok(idx) = field.parse::<usize>() {
+                            if idx < elems.len() {
+                                return (elems[idx].clone(), errs);
+                            }
+                        }
+                        errs.push(Error::new(
+                            "E0019",
+                            loc,
+                            &format!("tuple index '{}' out of bounds", field),
+                        ));
+                        (Typ::TInvalid, errs)
+                    } else {
+                        errs.push(Error::new("E0014", loc, "field access on non-struct type"));
+                        (Typ::TInvalid, errs)
+                    }
                 }
             }
+        }
+        Expr::ETupleLit { values, loc } => {
+            let mut errs = vec![];
+            let elem_types: Vec<Typ> = values
+                .iter()
+                .map(|v| infer_type(env, func_sigs, structs, struct_type_params, enums, enum_type_params, func_return, droppable, v).0)
+                .collect();
+            (Typ::TTuple { elems: elem_types }, errs)
         }
         Expr::EArrayLit { values, loc } => {
             if values.is_empty() {
@@ -1234,6 +1256,23 @@ pub(crate) fn infer_type(
             let mut errs = vec![];
             for stmt in stmts {
                 match stmt {
+                    Stmt::SLetTuple { patterns, expr, .. } => {
+                        let (t, se) = require_type(
+                            env,
+                            func_sigs,
+                            structs,
+                            struct_type_params,
+                            enums,
+                            enum_type_params,
+                            func_return, droppable,
+
+                            expr,
+                        );
+                        errs.extend(se);
+                        for name in patterns {
+                            env.vars.insert(name.clone(), t.clone());
+                        }
+                    }
                     Stmt::SLet { name, expr, .. } => {
                         let (t, se) = require_type(
                             env,

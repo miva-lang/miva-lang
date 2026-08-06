@@ -768,6 +768,25 @@ impl<'input> Parser<'input> {
 
     fn parse_typ(&mut self) -> Result<Typ, String> {
         match self.peek_token()? {
+            Some(&Token::LParen) => {
+                self.advance()?;
+                let mut elems = Vec::new();
+                if self.peek_token()? != Some(&Token::RParen) {
+                    loop {
+                        elems.push(self.parse_typ()?);
+                        if self.peek_token()? == Some(&Token::Comma) {
+                            self.advance()?;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(&Token::RParen)?;
+                if elems.len() == 1 {
+                    return Err("single-element tuple is not supported".to_string());
+                }
+                Ok(Typ::TTuple { elems })
+            }
             Some(&Token::Fn) => {
                 self.advance()?; // consume "fn"
                 self.expect(&Token::LParen)?;
@@ -890,7 +909,47 @@ impl<'input> Parser<'input> {
         let is_ident_stmt = matches!(peeked, Some(Token::Ident(_)));
 
         match peeked {
-            Some(Token::Let) => return self.parse_let_typed(),
+            Some(Token::Let) => {
+                let start = self.advance()?.0;
+                if self.peek_token()? == Some(&Token::LParen) {
+                    return self.parse_let_tuple(start);
+                }
+                let peeked2 = self.peek_token()?;
+                match peeked2 {
+                    Some(Token::Ident(_)) => {
+                        let (name, _) = self.expect_ident()?;
+                        match self.peek_token()? {
+                            Some(&Token::Colon) => {
+                                let typ = self.parse_typ()?;
+                                self.expect(&Token::Eq)?;
+                                let expr = self.parse_expr()?;
+                                self.expect(&Token::Semi)?;
+                                return Ok(Stmt::SLetTyped {
+                                    loc: self.loc(start),
+                                    name,
+                                    typ,
+                                    expr: Box::new(expr),
+                                });
+                            }
+                            Some(&Token::Eq) => {
+                                self.advance()?;
+                                let expr = self.parse_expr()?;
+                                self.expect(&Token::Semi)?;
+                                return Ok(Stmt::SLet {
+                                    loc: self.loc(start),
+                                    mutable: false,
+                                    name,
+                                    expr: Box::new(expr),
+                                });
+                            }
+                            _ => {
+                                return Err("expected ':' or '=' after identifier in let statement".to_string());
+                            }
+                        }
+                    }
+                    _ => return Err("expected identifier or '(' after 'let'".to_string()),
+                }
+            }
             Some(Token::Mut) => return self.parse_let_mut(),
             Some(Token::Return) => return self.parse_return_stmt(),
             Some(Token::If) => return self.parse_if_stmt(),
@@ -1050,6 +1109,49 @@ impl<'input> Parser<'input> {
             name,
             expr: Box::new(expr),
         })
+    }
+
+    fn parse_let_tuple(&mut self, start: usize) -> Result<Stmt, String> {
+        self.advance()?; // consume "("
+        let patterns = self.parse_tuple_pattern()?;
+        self.expect(&Token::RParen)?;
+        self.expect(&Token::Eq)?;
+        let expr = self.parse_expr()?;
+        self.expect(&Token::Semi)?;
+        Ok(Stmt::SLetTuple {
+            loc: self.loc(start),
+            patterns,
+            expr: Box::new(expr),
+        })
+    }
+
+    fn parse_tuple_pattern(&mut self) -> Result<Vec<String>, String> {
+        let mut patterns = Vec::new();
+        loop {
+            match self.peek_token()? {
+                Some(&Token::LParen) => {
+                    self.advance()?;
+                    let nested = self.parse_tuple_pattern()?;
+                    patterns.extend(nested);
+                    self.expect(&Token::RParen)?;
+                }
+                Some(&Token::Ident(_)) => {
+                    let (name, _) = self.expect_ident()?;
+                    patterns.push(name);
+                }
+                Some(&Token::Comma) => {
+                    self.advance()?;
+                }
+                Some(&Token::RParen) | None => break,
+                _ => return Err("expected identifier or '(' in tuple pattern".to_string()),
+            }
+            if self.peek_token()? == Some(&Token::Comma) {
+                self.advance()?;
+            } else {
+                break;
+            }
+        }
+        Ok(patterns)
     }
 
     fn parse_return_stmt(&mut self) -> Result<Stmt, String> {
@@ -1634,16 +1736,33 @@ impl<'input> Parser<'input> {
     fn parse_primary(&mut self) -> Result<Expr, String> {
         match self.peek_token()? {
             Some(&Token::LParen) => {
-                // Disambiguate `(` grouping `)` from a lambda `(params): ret => {...}`.
-                // Use speculative parsing: try to parse a full lambda head; if it
-                // succeeds (ending at `=>`), this is a lambda.
+                let start = self.last_offset;
                 if self.is_lambda_head() {
                     return self.parse_lambda();
                 }
                 self.advance()?;
-                let expr = self.parse_expr()?;
+                if self.peek_token()? == Some(&Token::RParen) {
+                    self.advance()?;
+                    return Ok(Expr::EVoid { loc: self.loc(start) });
+                }
+                let mut values = Vec::new();
+                values.push(self.parse_expr()?);
+                if self.peek_token()? == Some(&Token::Comma) {
+                    loop {
+                        self.advance()?;
+                        values.push(self.parse_expr()?);
+                        if self.peek_token()? == Some(&Token::Comma) {
+                            self.advance()?;
+                        } else {
+                            break;
+                        }
+                    }
+                }
                 self.expect(&Token::RParen)?;
-                Ok(expr)
+                Ok(Expr::ETupleLit {
+                    loc: self.loc(start),
+                    values,
+                })
             }
             Some(&Token::IntLit(_)) => {
                 let (start, tok, _) = self.advance()?;
@@ -1742,12 +1861,6 @@ impl<'input> Parser<'input> {
                     loc: self.loc(start),
                     name,
                 })
-            }
-            Some(&Token::LParen) => {
-                self.advance()?;
-                let expr = self.parse_expr()?;
-                self.expect(&Token::RParen)?;
-                Ok(expr)
             }
             Some(&Token::LBrace) => self.parse_block_expr(),
             Some(&Token::LBracket) => {
@@ -2114,7 +2227,8 @@ fn expr_loc(e: &Expr) -> Loc {
         | Expr::EMethodCall { loc, .. }
         | Expr::EMacroVar { loc, .. }
         | Expr::EEnumPattern { loc, .. }
-        | Expr::ELambda { loc, .. } => loc.clone(),
+        | Expr::ELambda { loc, .. }
+        | Expr::ETupleLit { loc, .. } => loc.clone(),
     }
 }
 

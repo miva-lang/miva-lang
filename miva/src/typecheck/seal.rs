@@ -81,6 +81,11 @@ pub(crate) fn seal_check_expr(expr: &Expr, sealed: &std::collections::HashSet<&s
                 seal_check_expr(v, sealed, errs);
             }
         }
+        Expr::ETupleLit { values, .. } => {
+            for v in values {
+                seal_check_expr(v, sealed, errs);
+            }
+        }
         Expr::EWhile { cond, body, .. } => {
             seal_check_expr(cond, sealed, errs);
             seal_check_expr(body, sealed, errs);
@@ -100,13 +105,15 @@ pub(crate) fn seal_check_expr(expr: &Expr, sealed: &std::collections::HashSet<&s
         | Expr::EClone { .. }
         | Expr::EMacroVar { .. }
         | Expr::EEnumPattern { .. }
-        | Expr::EVoid { .. } => {}
+        | Expr::EVoid { .. }
+        | Expr::ETupleLit { .. } => {}
     }
 }
 
 pub(crate) fn seal_check_stmt(stmt: &Stmt, sealed: &std::collections::HashSet<&str>, errs: &mut Vec<Error>) {
     match stmt {
         Stmt::SLet { expr, .. }
+        | Stmt::SLetTuple { expr, .. }
         | Stmt::SLetTyped { expr, .. }
         | Stmt::SAssign { expr, .. }
         | Stmt::SReturn { expr, .. }

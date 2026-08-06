@@ -9,6 +9,7 @@ pub fn is_droppable_typ(droppable: &HashSet<String>, t: &Typ) -> bool {
     match t {
         Typ::TStruct { name, .. } => droppable.contains(name),
         Typ::TArray { of } => is_droppable_typ(droppable, of),
+        Typ::TTuple { elems } => elems.iter().any(|e| is_droppable_typ(droppable, e)),
         _ => false,
     }
 }
@@ -17,6 +18,9 @@ pub fn droppable_typ_name(t: &Typ) -> String {
     match t {
         Typ::TStruct { name, .. } => name.clone(),
         Typ::TArray { of } => format!("[{}]", droppable_typ_name(of)),
+        Typ::TTuple { elems } => {
+            format!("({})", elems.iter().map(|e| droppable_typ_name(e)).collect::<Vec<_>>().join(", "))
+        }
         _ => "?".to_string(),
     }
 }
@@ -24,6 +28,8 @@ pub fn droppable_typ_name(t: &Typ) -> String {
 /// Names of all droppable types: those with a registered op_drop, plus —
 /// because droppability is infectious — any struct containing a droppable
 /// field or enum carrying a droppable payload, at any nesting depth.
+/// Also includes built-in resource-owning types like `Vec` whose buffers
+/// must be freed upon destruction.
 pub fn compute_droppable(defs: &[Def]) -> HashSet<String> {
     let mut droppable: HashSet<String> = defs
         .iter()
@@ -36,6 +42,8 @@ pub fn compute_droppable(defs: &[Def]) -> HashSet<String> {
             _ => None,
         })
         .collect();
+    // Add built-in resource-owning types that need drop glue
+    droppable.insert("Vec".to_string());
     loop {
         let before = droppable.len();
         for def in defs {

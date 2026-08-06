@@ -191,6 +191,7 @@ pub(crate) fn expr_numeric_kind(expr: &Expr, ctx: &LlvmCtx) -> NumKind {
                 None => NumKind::Int,
             }
         }
+        Expr::ETupleLit { .. } => NumKind::Int,
         _ => NumKind::Int,
     }
 }

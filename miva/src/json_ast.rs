@@ -50,10 +50,27 @@ mod tests {
             {"name":"j","type":{"kind":"null"}},
             {"name":"k","type":{"kind":"ptrany"}},
             {"name":"l","type":{"kind":"invalid"}},
-            {"name":"m","type":{"kind":"struct","name":"Bar","fields":[{"name":"x","type":{"kind":"int"}}]}}
+            {"name":"m","type":{"kind":"struct","name":"Bar","fields":[{"name":"x","type":{"kind":"int"}}]}},
+            {"name":"n","type":{"kind":"tuple","elems":[{"kind":"int"},{"kind":"bool"}]}}
         ]}],"files":["test.miva"]}"#;
         let result = from_str(json).unwrap();
         assert_eq!(result.defs.len(), 1);
+    }
+
+    #[test]
+    fn test_let_tuple_stmt() {
+        let json = r#"{"defs":[{"kind":"func","loc":{"line":1,"col":1},"name":"test","params":[],"returns":null,"body":{"kind":"block","loc":{"line":1,"col":10},"stmts":[{"kind":"letTuple","loc":{"line":2,"col":5},"patterns":["x","y"],"expr":{"kind":"tupleLit","loc":{"line":2,"col":15},"values":[{"kind":"int","loc":{"line":2,"col":16},"value":1},{"kind":"int","loc":{"line":2,"col":19},"value":2}]}}],"result":null},"safety":"safe"}],"files":["test.miva"]}"#;
+        let result = from_str(json).unwrap();
+        match &result.defs[0] {
+            Def::DFunc { body, .. } => match body.as_ref() {
+                Expr::EBlock { stmts, .. } => {
+                    assert_eq!(stmts.len(), 1);
+                    assert!(matches!(&stmts[0], Stmt::SLetTuple { patterns, .. } if patterns.len() == 2));
+                }
+                _ => panic!("expected EBlock"),
+            },
+            _ => panic!("expected DFunc"),
+        }
     }
 
     #[test]

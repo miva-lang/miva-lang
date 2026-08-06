@@ -366,13 +366,20 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
             // snapshot their outer bindings and restore them afterwards so an
             // inner shadowing `let` (e.g. from macro expansion) cannot clobber
             // an outer variable of the same name.
-            let declared: Vec<String> = stmts
+            let mut declared: Vec<String> = stmts
                 .iter()
                 .filter_map(|s| match s {
                     Stmt::SLet { name, .. } | Stmt::SLetTyped { name, .. } => Some(name.clone()),
                     _ => None,
                 })
                 .collect();
+            for s in stmts {
+                if let Stmt::SLetTuple { patterns, .. } = s {
+                    for n in patterns {
+                        declared.push(n.clone());
+                    }
+                }
+            }
             let saved: Vec<(String, Option<String>, Option<String>, Option<Typ>)> = declared
                 .iter()
                 .map(|n| {
@@ -420,10 +427,15 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
         }
         Expr::EFieldAccess { expr: fexpr, field, .. } => {
             if field.chars().all(|c| c.is_ascii_digit()) {
+                let is_tuple = if let Expr::EVar { name: vname, .. } = fexpr.as_ref() {
+                    matches!(ctx.var_types.get(vname), Some(Typ::TTuple { .. }))
+                } else {
+                    false
+                };
                 let val = gen_expr(fexpr, ctx, body);
                 let ptr_val = ctx.gen_tmp("fa_ptr");
                 body.push_str(&format!("{}{} = inttoptr i64 {} to ptr\n", ctx.indent_str(), ptr_val, val));
-                let idx: i64 = field.parse::<i64>().unwrap_or(0) + 1;
+                let idx: i64 = field.parse::<i64>().unwrap_or(0) + if is_tuple { 0 } else { 1 };
                 let gep = ctx.gen_tmp("fa");
                 body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, ptr_val, idx));
                 let load = ctx.gen_tmp("fal");
@@ -641,6 +653,20 @@ pub(crate) fn gen_expr(expr: &Expr, ctx: &mut LlvmCtx, body: &mut String) -> Str
                 body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), v, gep));
             }
             let int_tmp = ctx.gen_tmp("arri");
+            body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
+            int_tmp
+        }
+        Expr::ETupleLit { values, .. } => {
+            let vals: Vec<String> = values.iter().map(|v| gen_expr(v, ctx, body)).collect();
+            let tmp = ctx.gen_tmp("tp");
+            let size = values.len() * 8;
+            body.push_str(&format!("{}{} = call ptr @miva_alloc(i64 {})\n", ctx.indent_str(), tmp, size));
+            for (i, v) in vals.iter().enumerate() {
+                let gep = ctx.gen_tmp("te");
+                body.push_str(&format!("{}{} = getelementptr i64, ptr {}, i64 {}\n", ctx.indent_str(), gep, tmp, i));
+                body.push_str(&format!("{}store i64 {}, ptr {}\n", ctx.indent_str(), v, gep));
+            }
+            let int_tmp = ctx.gen_tmp("tpi");
             body.push_str(&format!("{}{} = ptrtoint ptr {} to i64\n", ctx.indent_str(), int_tmp, tmp));
             int_tmp
         }

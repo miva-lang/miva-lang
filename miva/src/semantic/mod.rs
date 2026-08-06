@@ -61,6 +61,11 @@ impl<'a> BanCtx<'a> {
             Typ::TFuture { of } => self.generic_arg(of, loc, "future"),
             Typ::TBox { of } => self.generic_arg(of, loc, "box"),
             Typ::TArray { of } | Typ::TPtr { to: of } => self.typ(of, loc),
+            Typ::TTuple { elems } => {
+                for e in elems {
+                    self.typ(e, loc);
+                }
+            }
             _ => {}
         }
     }
@@ -150,6 +155,11 @@ impl<'a> BanCtx<'a> {
                     self.expr(v);
                 }
             }
+            Expr::ETupleLit { values, .. } => {
+                for v in values {
+                    self.expr(v);
+                }
+            }
             Expr::ELambda { loc, params, ret, body, .. } => {
                 for p in params {
                     let (Param::PRef { typ, .. } | Param::POwn { typ, .. }) = p;
@@ -168,7 +178,7 @@ impl<'a> BanCtx<'a> {
                 self.typ(typ, loc);
                 self.expr(expr);
             }
-            Stmt::SLet { expr, .. } | Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
+            Stmt::SLet { expr, .. } | Stmt::SLetTuple { expr, .. } | Stmt::SAssign { expr, .. } | Stmt::SExpr { expr, .. } => {
                 self.expr(expr)
             }
             Stmt::SFieldAssign { target, expr, .. } => {
@@ -227,7 +237,7 @@ fn is_copy_type(types: &HashMap<String, Vec<FieldDef>>, t: &Typ) -> bool {
                 false
             }
         }
-        Typ::TFunc { .. } | Typ::TShape { .. } => false,
+        Typ::TFunc { .. } | Typ::TShape { .. } | Typ::TTuple { .. } => false,
     }
 }
 
@@ -408,6 +418,12 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
             }
         }
         Expr::EArrayLit { loc, values } => {
+            for elem in values {
+                errs.extend(check_expr(ctx, symbol_table, elem));
+                consume_droppable(ctx, elem);
+            }
+        }
+        Expr::ETupleLit { loc, values } => {
             for elem in values {
                 errs.extend(check_expr(ctx, symbol_table, elem));
                 consume_droppable(ctx, elem);
@@ -607,6 +623,25 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
 
             for stmt in stmts {
                 match stmt {
+                    Stmt::SLetTuple {
+                        loc,
+                        patterns,
+                        expr,
+                    } => {
+                        errs.extend(check_expr(ctx, symbol_table, expr));
+                        consume_droppable(ctx, expr);
+                        for name in patterns {
+                            ctx.vars.insert(
+                                name.clone(),
+                                VarInfo {
+                                    typ: Typ::TInt,
+                                    state: VarState::Valid,
+                                    is_mutable: false,
+                                    is_ref_param: false,
+                                },
+                            );
+                        }
+                    }
                     Stmt::SLet {
                         loc,
                         mutable,
@@ -764,7 +799,8 @@ fn check_expr(ctx: &mut Context, symbol_table: &SymbolTable, e: &Expr) -> Vec<Er
         | Expr::EMacroVar { .. }
         | Expr::EAddr { .. }
         | Expr::EEnumPattern { .. }
-        | Expr::ELambda { .. } => {}
+        | Expr::ELambda { .. }
+        | Expr::ETupleLit { .. } => {}
         Expr::EMethodCall { .. } => unreachable!(),
     }
 

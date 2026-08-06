@@ -379,7 +379,11 @@ impl MvmCodegen {
                     // function body use the right entry.
                     cg.func_ref_params.insert(qual_name.clone(), ref_param_names.clone());
                     if returns.is_none() && !ref_param_names.is_empty() {
-                        cg.void_ref_params.insert(qual_name, ref_param_names);
+                        cg.void_ref_params.insert(qual_name.clone(), ref_param_names.clone());
+                        let bare = name.rsplit('.').next().unwrap_or(name);
+                        if !cg.void_ref_params.contains_key(bare) {
+                            cg.void_ref_params.insert(bare.to_string(), ref_param_names);
+                        }
                     }
                 }
                 Def::DTest { name, .. } => {
@@ -424,10 +428,10 @@ impl MvmCodegen {
                     });
                 }
                 Def::DFunc { name, params, returns, body, .. } => {
-                    let func_idx = cg.func_indices[name];
                     let qual_name = current_module.as_ref()
                         .map(|mod_| format!("{}.{}", mod_, name))
                         .unwrap_or_else(|| name.clone());
+                    let func_idx = cg.func_indices[&qual_name];
                     cg.current_func_name = qual_name;
                     cg.compile_function(func_idx, params, body, false, returns);
                 }
@@ -524,18 +528,11 @@ impl MvmCodegen {
         let needs_ret = !self.code.is_empty()
             && !matches!(self.last_emitted, Some(MvmOp::Ret | MvmOp::RetVal));
         if needs_ret {
-            // If this function has ref parameters AND returns void, return
-            // the value of the first ref param so the caller can store the
-            // modified struct back (ref params are passed by value in the
-            // MVM backend; returning and re-storing is the simplest way to
-            // propagate mutations).
             if returns.is_none() {
                 let ref_param_names = self.func_ref_params.get(&self.current_func_name);
                 if let Some(names) = ref_param_names {
                     if let Some(ref_name) = names.first() {
                         if let Some(idx) = self.resolve_local(ref_name) {
-                            // Drop the body's result (typically Unit) and
-                            // push the ref param value instead.
                             self.emit_op(MvmOp::Drop);
                             self.emit_op(MvmOp::LoadLocal);
                             self.emit_u32(idx);
@@ -720,8 +717,13 @@ impl MvmCodegen {
                     }
                 }
                 if field.chars().all(|c| c.is_ascii_digit()) {
+                    let is_tuple = matches!(&obj.as_ref(), Expr::EVar { name, .. } if matches!(self.var_types.get(name), Some(Typ::TTuple { .. })));
                     self.compile_expr(obj);
-                    self.emit_op(MvmOp::EnumGet);
+                    if is_tuple {
+                        self.emit_op(MvmOp::StructGet);
+                    } else {
+                        self.emit_op(MvmOp::EnumGet);
+                    }
                     self.emit_u32(field.parse::<u32>().unwrap());
                 } else {
                     self.compile_expr(obj);
@@ -844,6 +846,13 @@ impl MvmCodegen {
                     self.emit_u32(name_idx);
                     self.emit_u8(args.len() as u8);
                 } else if let Some(&func_idx) = self.func_indices.get(name)
+                    .or_else(|| {
+                        if name.starts_with("std.") {
+                            self.func_indices.get(&format!("mvp_{}", name))
+                        } else {
+                            None
+                        }
+                    })
                     .or_else(|| self.func_indices.get(lookup_name))
                 {
                     for arg in args {
@@ -851,8 +860,6 @@ impl MvmCodegen {
                     }
                     self.emit_op(MvmOp::Call);
                     self.emit_u32(func_idx as u32);
-                    // Async functions are spawned by the VM on call; the returned
-                    // value is already a future[T], so no wrapping is needed.
                 } else if let Some(typ) = self.var_types.get(lookup_name) {
                     if let Typ::TFunc { .. } = typ {
                         // Calling a closure-typed variable: push the arguments,
@@ -901,13 +908,19 @@ impl MvmCodegen {
                 self.pop_scope();
             }
             Expr::EArrayLit { values, .. } => {
-                // Push values first, then size, then ArrayNew
                 for v in values {
                     self.compile_expr(v);
                 }
                 self.emit_op(MvmOp::PushI64);
                 self.emit_i64(values.len() as i64);
                 self.emit_op(MvmOp::ArrayNew);
+            }
+            Expr::ETupleLit { values, .. } => {
+                for v in values {
+                    self.compile_expr(v);
+                }
+                self.emit_op(MvmOp::StructNew);
+                self.emit_u32(values.len() as u32);
             }
             Expr::EVoid { .. } => {
                 self.emit_op(MvmOp::PushUnit);
@@ -1251,6 +1264,21 @@ impl MvmCodegen {
 
     fn compile_stmt(&mut self, stmt: &Stmt) {
         match stmt {
+            Stmt::SLetTuple { patterns, expr, .. } => {
+                let tuple_idx = self.declare_local("__tuple");
+                self.compile_expr(expr);
+                self.emit_op(MvmOp::StoreLocal);
+                self.emit_u32(tuple_idx);
+                for (i, name) in patterns.iter().enumerate() {
+                    let idx = self.declare_local(name);
+                    self.emit_op(MvmOp::LoadLocal);
+                    self.emit_u32(tuple_idx);
+                    self.emit_op(MvmOp::StructGet);
+                    self.emit_u32(i as u32);
+                    self.emit_op(MvmOp::StoreLocal);
+                    self.emit_u32(idx);
+                }
+            }
             Stmt::SLet { name, expr, .. } => {
                 let idx = self.declare_local(name);
                 // An untyped binding of a lambda is a closure-typed variable.
@@ -1312,17 +1340,9 @@ impl MvmCodegen {
             }
             Stmt::SReturn { expr, .. } => {
                 self.compile_expr(expr);
-                // For void functions with ref parameters, the return should
-                // carry the modified ref-param value back to the caller so
-                // that the caller's SExpr store-back logic works correctly.
-                // Drop the expression result and push the ref param instead.
                 if self.current_func_name.is_empty() {
-                    // Not inside a function (shouldn't happen)
                     self.emit_op(MvmOp::RetVal);
                 } else {
-                    // Only void functions with ref parameters return the mutated
-                    // ref-param struct; non-void ref-param functions (e.g. `get`,
-                    // `pop`) return their real expression result.
                     let is_void_ref = self.void_ref_params.contains_key(&self.current_func_name);
                     if is_void_ref {
                         let ref_param_names = self.func_ref_params.get(&self.current_func_name);
@@ -1348,6 +1368,13 @@ impl MvmCodegen {
                     // Try full qualified name first, fall back to bare name.
                     let lookup_name = name.rsplit('.').next().unwrap_or(name);
                     let ref_names = self.void_ref_params.get(name)
+                        .or_else(|| {
+                            if name.starts_with("std.") {
+                                self.void_ref_params.get(&format!("mvp_{}", name))
+                            } else {
+                                None
+                            }
+                        })
                         .or_else(|| self.void_ref_params.get(lookup_name));
                     if let Some(ref_names) = ref_names {
                         if let Some(first_ref) = ref_names.first() {
@@ -1428,11 +1455,14 @@ impl MvmCodegen {
             }
         }
         match expr {
-            Expr::EVar { name, .. } | Expr::EMove { name, .. } => self
-                .var_types
-                .get(name)
-                .and_then(typ_name)
-                .or_else(|| self.param_types.get(name).and_then(typ_name)),
+            Expr::EVar { name, .. } | Expr::EMove { name, .. } => {
+                let result = self
+                    .var_types
+                    .get(name)
+                    .and_then(typ_name)
+                    .or_else(|| self.param_types.get(name).and_then(typ_name));
+                result
+            }
             Expr::EStructLit { name, .. } => Some(name.clone()),
             Expr::EFieldAccess { expr, field, .. } => {
                 let inner = self.find_struct_name(expr)?;

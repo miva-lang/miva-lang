@@ -173,6 +173,16 @@ impl<'a> Ctx<'a> {
                 let elem = self.infer_droppable(values.first()?, state)?;
                 Some(Typ::TArray { of: Box::new(elem) })
             }
+            Expr::ETupleLit { values, .. } => {
+                if let Some(first) = values.first() {
+                    if let Some(elem) = self.infer_droppable(first, state) {
+                        return Some(Typ::TTuple { elems: values.iter().map(|v| {
+                            self.infer_droppable(v, state).unwrap_or(Typ::TInvalid)
+                        }).collect() });
+                    }
+                }
+                None
+            }
             Expr::EMove { name, .. } | Expr::EVar { name, .. } | Expr::EClone { name, .. } => {
                 if state.is_shadowed(name) {
                     None
@@ -246,6 +256,18 @@ impl<'a> Ctx<'a> {
                         }),
                     }),
                 });
+            }
+            Typ::TTuple { elems } => {
+                for (i, elem_typ) in elems.iter().enumerate() {
+                    if self.is_droppable(elem_typ) {
+                        let fa = Expr::EFieldAccess {
+                            loc: loc.clone(),
+                            expr: Box::new(base.clone()),
+                            field: i.to_string(),
+                        };
+                        self.emit_glue(loc, &fa, elem_typ, state, out);
+                    }
+                }
             }
             _ => {}
         }
@@ -384,6 +406,28 @@ impl<'a> Ctx<'a> {
         let mut out: Vec<Stmt> = Vec::with_capacity(old.len());
         for mut stmt in old {
             match &mut stmt {
+                Stmt::SLetTuple {
+                    loc,
+                    patterns,
+                    expr,
+                } => {
+                    self.walk_expr(expr, state);
+                    let droppable = self.infer_droppable(expr, state);
+                    let _loc = loc.clone();
+                    let pattern_names: Vec<String> = patterns.clone();
+                    out.push(stmt);
+                    if let Some(typ) = droppable {
+                        for name in &pattern_names {
+                            state.declare(name.clone(), typ.clone());
+                        }
+                    } else {
+                        for name in &pattern_names {
+                            if state.types.contains_key(name) {
+                                state.shadow(name.clone());
+                            }
+                        }
+                    }
+                }
                 Stmt::SLet {
                     loc, name, expr, ..
                 } => {

@@ -203,6 +203,11 @@ fn check_expr(expr: &Expr, modname: &str, warnings: &mut Vec<Warning>) {
                 check_expr(elem, modname, warnings);
             }
         }
+        Expr::ETupleLit { values, .. } => {
+            for elem in values {
+                check_expr(elem, modname, warnings);
+            }
+        }
         Expr::ECast { expr, .. } => {
             check_expr(expr, modname, warnings);
         }
@@ -233,13 +238,27 @@ fn check_expr(expr: &Expr, modname: &str, warnings: &mut Vec<Warning>) {
         | Expr::EMove { .. }
         | Expr::EVar { .. }
         | Expr::EEnumPattern { .. }
-        | Expr::ELambda { .. } => {}
+        | Expr::ELambda { .. }
+        | Expr::ETupleLit { .. } => {}
         Expr::EMethodCall { .. } => unreachable!(),
     }
 }
 
 fn check_stmt(stmt: &Stmt, modname: &str, warnings: &mut Vec<Warning>) {
     match stmt {
+        Stmt::SLetTuple {
+            loc,
+            patterns,
+            expr,
+            ..
+        } => {
+            for name in patterns {
+                if let Some(w) = check_snake(loc, name, "var") {
+                    warnings.push(w);
+                }
+            }
+            check_expr(expr, modname, warnings);
+        }
         Stmt::SLet {
             loc, name, expr, ..
         } => {

@@ -77,6 +77,11 @@ pub enum Typ {
     TShape {
         name: String,
     },
+    #[serde(rename = "tuple")]
+    TTuple {
+        #[serde(rename = "elems")]
+        elems: Vec<Typ>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -184,6 +189,12 @@ pub enum Stmt {
     SCIntro { loc: Loc, content: String },
     #[serde(rename = "empty")]
     SEmpty { loc: Loc },
+    #[serde(rename = "letTuple")]
+    SLetTuple {
+        loc: Loc,
+        patterns: Vec<String>,
+        expr: Box<Expr>,
+    },
 }
 
 // ── Impl helpers ──────────────────────────────────────────────────────────
@@ -350,6 +361,11 @@ pub enum Expr {
         #[serde(default)]
         captures: Vec<(String, Typ)>,
         body: Box<Expr>,
+    },
+    #[serde(rename = "tupleLit")]
+    ETupleLit {
+        loc: Loc,
+        values: Vec<Expr>,
     },
 }
 

@@ -229,7 +229,8 @@ fn loc_of(e: &Expr) -> Loc {
         | Expr::ELoop { loc, .. }
         | Expr::EFor { loc, .. }
         | Expr::EEnumPattern { loc, .. }
-        | Expr::ELambda { loc, .. } => loc.clone(),
+        | Expr::ELambda { loc, .. }
+        | Expr::ETupleLit { loc, .. } => loc.clone(),
         Expr::EMacroVar { loc, .. } => loc.clone(),
         Expr::EMethodCall { loc, .. } => loc.clone(),
     }

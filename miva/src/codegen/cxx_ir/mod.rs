@@ -166,6 +166,7 @@ pub enum IrExpr {
     FieldAccess { expr: Box<IrExpr>, field: String },
     StructInit { name: String, type_args: Vec<Typ>, fields: Vec<(String, IrExpr)> },
     ArrayInit(Vec<IrExpr>),
+    TupleInit(Vec<IrExpr>),
     Cast { expr: Box<IrExpr>, to: Typ },
     Addr(Box<IrExpr>),
     Deref(Box<IrExpr>),
