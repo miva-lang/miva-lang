@@ -96,14 +96,14 @@ name = "myapp""#,
 name = "myapp"
 
 [dependencies]
-std = "0.1.3"
-json = "0.1.3"
+std = "0.1.4"
+json = "0.1.4"
 "#,
         );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
         let deps = config.dependencies();
-        assert_eq!(deps.get("std"), Some(&"0.1.3".to_string()));
-        assert_eq!(deps.get("json"), Some(&"0.1.3".to_string()));
+        assert_eq!(deps.get("std"), Some(&"0.1.4".to_string()));
+        assert_eq!(deps.get("json"), Some(&"0.1.4".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -162,7 +162,7 @@ type = "lib""#,
         write_config(
             &dir,
             r#"[dependencies]
-std = "0.1.3""#,
+std = "0.1.4""#,
         );
         let config = Config::load_from(&dir.join("miva.toml").to_string_lossy()).unwrap();
         assert!(config.project.is_none());

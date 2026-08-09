@@ -1,0 +1,149 @@
+module std.atomic;
+
+import "std/mutex";
+import "std/mem";
+
+// ── Thread-safe atomic access to a value ──────────────────────────────────────
+//
+// `Atomic[T]` provides mutual-exclusion-based atomic access to a value of any
+// type `T`. It wraps a `std.mutex.Mutex` and a heap-allocated buffer that holds
+// the current value. Every operation locks the mutex before reading or writing
+// the value, guaranteeing safe concurrent access.
+//
+// Ownership: each `Atomic[T]` owns exactly one C++ mutex (via `std.mutex`) and
+// one heap-allocated value buffer (via `std.mem.alloc`). Call `free` exactly once
+// to release both resources. Passing a freed `Atomic[T]` to any function triggers
+// a runtime panic.
+//
+// Safety: all operations are `unsafe` because they dereference raw pointers. The
+// caller is responsible for:
+//   - calling `free` exactly once on a live `Atomic[T]`;
+//   - not using an `Atomic[T]` after it has been freed;
+//   - only storing copyable `T` (the runtime reads/writes raw bytes).
+//
+// Note: this implementation uses a mutex (not hardware atomics), so it protects
+// all types — including structs and strings — but at the cost of locking overhead.
+// For lock-free hardware atomics see future extensions.
+
+Atomic[T] = struct {
+  buf: ptrany,
+  mutex: std.mutex.Mutex,
+  freed: bool,
+}
+
+// Per-type element byte size. Hard-coded to 8 (matching `int64_t` / `double`,
+// the two most common atomic types). Extend this dispatch table to support
+// additional element sizes.
+elem_size[T] = (): int => 8
+
+// Create a new `Atomic[T]` with the value buffer allocated but not zeroed.
+// The caller should `store` an initial value before `load`ing.
+unsafe new[T] = (): Atomic[T] => {
+  let buf ptrany = std.mem.alloc(elem_size[T]());
+  let m Mutex = std.mutex.create();
+  let r Atomic[T] = struct Atomic[T] { buf = buf, mutex = m, freed = false };
+  return r;
+}
+
+// Internal: check if the atomic has been freed. Panics if so.
+unsafe check = (ref a: Atomic[T]) => {
+  if (a.freed) {
+    panic("atomic: use after free");
+  };
+}
+
+// Load the current value from an `Atomic[T]`. Returns a copy of the value.
+unsafe load[T] = (ref a: Atomic[T]): T => {
+  check(a);
+  std.mutex.lock(a.mutex);
+  let p ptr<T> = (a.buf as ptr<T>);
+  let val T = deref p;
+  std.mutex.unlock(a.mutex);
+  return val;
+}
+
+// Store `val` into an `Atomic[T]`, replacing the previous value. The old value
+// is discarded.
+unsafe store[T] = (ref a: Atomic[T], val: T) => {
+  check(a);
+  std.mutex.lock(a.mutex);
+  let p ptr<T> = (a.buf as ptr<T>);
+  ptr_set(p, val);
+  std.mutex.unlock(a.mutex);
+}
+
+// Swap the current value with `new_val`, returning the previous value.
+unsafe swap[T] = (ref a: Atomic[T], new_val: T): T => {
+  check(a);
+  std.mutex.lock(a.mutex);
+  let p ptr<T> = (a.buf as ptr<T>);
+  let old T = deref p;
+  ptr_set(p, new_val);
+  std.mutex.unlock(a.mutex);
+  return old;
+}
+
+// Compare the current value with `expected` using `==`. If equal, store `new_val`
+// and return `true`. Otherwise return `false` (leaving the value unchanged).
+unsafe compare_exchange[T] = (ref a: Atomic[T], expected: T, new_val: T): bool => {
+  check(a);
+  std.mutex.lock(a.mutex);
+  let p ptr<T> = (a.buf as ptr<T>);
+  let current T = deref p;
+  mut success := false;
+  if (current == expected) {
+    ptr_set(p, new_val);
+    success = true;
+  };
+  std.mutex.unlock(a.mutex);
+  return success;
+}
+
+// Fetch the current value, add `val` to it, and store the result back. Returns
+// the original value before the addition. Only works for integer types.
+unsafe fetch_add[T] = (ref a: Atomic[T], val: T): T => {
+  check(a);
+  std.mutex.lock(a.mutex);
+  let p ptr<T> = (a.buf as ptr<T>);
+  let old T = deref p;
+  ptr_set(p, old + val);
+  std.mutex.unlock(a.mutex);
+  return old;
+}
+
+// Subtract `val` from the current value and return the original value.
+// Only works for integer types.
+unsafe fetch_sub[T] = (ref a: Atomic[T], val: T): T => {
+  check(a);
+  std.mutex.lock(a.mutex);
+  let p ptr<T> = (a.buf as ptr<T>);
+  let old T = deref p;
+  ptr_set(p, old - val);
+  std.mutex.unlock(a.mutex);
+  return old;
+}
+
+// Release all resources held by an `Atomic[T]`. After this call the atomic must
+// not be used except to be freed again (which is harmless).
+unsafe free[T] = (ref a: Atomic[T]) => {
+  if (a.freed) {
+    return;
+  };
+  a.freed = true;
+  if (a.buf != (0 as ptrany)) {
+    std.mem.mem_free(a.buf);
+    a.buf = 0 as ptrany;
+  };
+  std.mutex.free(a.mutex);
+}
+
+export Atomic;
+export elem_size;
+export new;
+export load;
+export store;
+export swap;
+export compare_exchange;
+export fetch_add;
+export fetch_sub;
+export free;

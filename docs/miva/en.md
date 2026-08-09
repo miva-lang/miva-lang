@@ -17,6 +17,7 @@ Miva is a compiled systems programming language. The compiler transpiles Miva so
 - [Control Flow](#control-flow)
 - [Functions](#functions)
 - [Closures](#closures)
+- [Tuples](#tuples)
 - [Structs](#structs)
 - [Enums](#enums)
 - [Generics](#generics)
@@ -24,14 +25,17 @@ Miva is a compiled systems programming language. The compiler transpiles Miva so
 - [Move Semantics & Ownership](#move-semantics--ownership)
 - [Async](#async)
 - [Method Call Sugar](#method-call-sugar)
+- [Shape System](#shape-system)
 - [Macros](#macros)
 - [Built-in Functions](#built-in-functions)
 - [Standard Library](#standard-library)
 - [C FFI (Foreign Function Interface)](#c-ffi-foreign-function-interface)
 - [Operator Overloading](#operator-overloading)
+- [Drop System](#drop-system)
 - [Compiler Pipeline & Commands](#compiler-pipeline--commands)
 - [Error Codes](#error-codes)
 - [Warning Codes](#warning-codes)
+
 
 ---
 
@@ -179,11 +183,11 @@ The `[scripts]` section defines custom commands runnable as `miva <name>`. Built
 
 ### Dependencies
 
-Dependencies are fetched from the standard library path. The standard library is bundled as `std-0.1.2`:
+Dependencies are fetched from the standard library path. The standard library is bundled as `std-0.1.2` through `std-0.1.4`:
 
 ```toml
 [dependencies]
-std = "0.1.2"
+std = "0.1.3"
 ```
 
 Dependencies from GitHub can be installed with:
@@ -191,6 +195,21 @@ Dependencies from GitHub can be installed with:
 ```bash
 miva get <github-url>
 ```
+
+#### Dependency Lock File
+
+When a project is built, Miva generates a `miva.lock` file that pins each dependency to a specific version. This ensures reproducible builds — subsequent builds will use the locked versions even if newer versions are available.
+
+The lock file format:
+
+```toml
+[dependencies]
+std = { version = "0.1.3", source = "path" }
+github_repo = { version = "1.0.0", source = "github" }
+```
+
+Use `miva reinit` to regenerate `miva.toml` from templates and remove `miva.lock`, forcing a fresh dependency resolution.
+
 
 ---
 
@@ -919,7 +938,66 @@ main = () => {
 
 ---
 
+## Tuples
+
+Miva supports homogeneous and heterogeneous tuple types as first-class values.
+
+### Tuple Syntax
+
+```miva
+// Tuple type annotation
+pair = (x: int, y: int): (int, int) => {
+    return (x, y);
+}
+
+// Heterogeneous tuple
+mixed = (): (int, bool, string) => {
+    return (1, true, "hello");
+}
+
+// Nested tuples
+nested = (): (int, (bool, string)) => {
+    return (1, (true, "nested"));
+}
+```
+
+### Tuple Access
+
+Tuple elements are accessed by zero-based positional index using field access syntax:
+
+```miva
+sum_pair = (p: (int, int)): int => {
+    return p.0 + p.1;
+}
+
+main = () => {
+    let p = pair(10, 20);
+    printlns!(p.0);   // 10
+    printlns!(p.1);   // 20
+
+    let m = mixed();
+    printlns!(m.0);   // 1
+    printlns!(m.1);   // true
+    printlns!(m.2);   // "hello"
+
+    let n = nested();
+    printlns!(n.1.0); // true (nested access)
+    printlns!(n.1.1); // "nested"
+}
+```
+
+### Tuple Comparison
+
+Tuples support equality comparison (`==`, `!=`) when all their element types are comparable:
+
+```miva
+let c = compare((1, true), (1, true));  // true
+```
+
+---
+
 ## Structs
+
 
 ### Struct Definition
 
@@ -1094,13 +1172,27 @@ mk_pair[T, U] = (a: T, b: U): Pair[T, U] => struct Pair[T, U] { first = a, secon
 mk_nested[T, U] = (a: T, b: U): Box[Pair[T, U]] => struct Box[Pair[T, U]] { value = mk_pair[T, U](a, b) }
 ```
 
-Type arguments use bracket syntax: `func[T, U](args)`.
+Type arguments use bracket syntax: `func[T, U](args)`. The constraint syntax is `T: ShapeA + ShapeB`.
+
+```miva
+// Generic struct with shape constraints
+Person = struct[T: PersonShape] {
+  data: T,
+}
+
+// Generic function with shape constraints
+process_person[T: PersonShape](p: T) => {
+  printlns!(p.name);
+  printlns!(p.age);
+}
+```
 
 Generic functions are compiled to C++ templates. Generic structs become C++ template structs. Generic enums become C++ tagged unions with a discriminant field. Both must be fully defined in headers, so exported generic functions are emitted inline.
 
 ---
 
 ## Safety Levels
+
 
 Miva provides three safety levels for functions:
 
@@ -1319,7 +1411,69 @@ p.first[int, string]()          // → first[int, string](p)
 
 ---
 
+## Shape System
+
+Miva supports **shape definitions**, which act as compile-time structural contracts for structs. A shape declares a set of required fields (name + type); any struct that contains at least those fields satisfies the shape, regardless of whether it has additional fields.
+
+### Shape Definition
+
+```miva
+PersonShape = shape {
+  name: string,
+  age: int,
+}
+
+HasValue[T] = shape {
+  value: T,
+}
+```
+
+Shapes are **not** runtime types — they are erased during code generation and exist solely for static checking.
+
+### Shape Satisfaction
+
+A struct satisfies a shape when it has all required fields with matching types. Extra fields are allowed:
+
+```miva
+Employee = struct {
+  name: string,
+  age: int,
+}
+
+Customer = struct {
+  name: string,
+  age: int,
+  email: string,  // extra field — OK
+}
+
+main = () => {
+  let emp Employee = struct Employee { name = "Alice", age = 30 };
+  let cust Customer = struct Customer { name = "Bob", age = 25, email = "bob@example.com" };
+}
+```
+
+### Shape-Bound Type Annotations
+
+When a variable is declared with a `TShape` type (e.g. `let x PersonShape = ...`), the compiler verifies that the assigned struct literal satisfies the shape:
+
+```miva
+let box1 IntBox = struct IntBox { value = 42 };       // satisfies HasValue[int]
+let box2 StringBox = struct StringBox { value = "hello" };  // satisfies HasValue[string]
+```
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| E0028 | Type does not satisfy shape — missing required field |
+| E0030 | Type does not satisfy shape bound — field has wrong type |
+
+See `examples/shape-system` for a complete demonstration.
+
+---
+
 ## Macros
+
 
 Miva has two kinds of macros: **built-in macros** and **user-defined macros**.
 
@@ -1583,7 +1737,10 @@ There is no automatic C binding generation; the C function must be linked manual
 
 ## Standard Library
 
-The Miva standard library (`std-0.1.2`) provides the following modules:
+The Miva standard library (`std-0.1.2` through `std-0.1.4`) provides the following modules:
+
+> **Note:** Module availability depends on the standard library version in use. `std.atomic`, `std.mutex`, and `std.testptr` require `std-0.1.3` or later.
+
 
 ### `std.str` — String Utilities
 
@@ -1677,7 +1834,68 @@ std.vec.grow[T](ref v, min_cap)         // Grow buffer to at least min_cap
 
 Most `std.vec` operations are `unsafe` as they dereference raw pointers.
 
+### `std.atomic` — Thread-Safe Atomic Access
+
+```miva
+import "std/atomic";
+
+// Type
+Atomic[T] = struct { buf: ptrany, mutex: std.mutex.Mutex, freed: bool }
+
+// Construction / destruction
+std.atomic.new[T](): Atomic[T]       // Allocates buffer; caller must call free
+std.atomic.free[T](ref a: Atomic[T]) // Releases buffer and mutex (call exactly once)
+
+// Access (all unsafe — lock mutex internally)
+std.atomic.load[T](ref a: Atomic[T]): T
+std.atomic.store[T](ref a: Atomic[T], val: T)
+std.atomic.swap[T](ref a: Atomic[T], new_val: T): T
+std.atomic.compare_exchange[T](ref a: Atomic[T], expected: T, new_val: T): bool
+std.atomic.fetch_add[T](ref a: Atomic[T], val: T): T  // integer only
+std.atomic.fetch_sub[T](ref a: Atomic[T], val: T): T  // integer only
+
+// Internal helper (unsafe)
+std.atomic.elem_size[T](): int  // Returns 8 (size of int64_t / double)
+```
+
+All operations acquire the internal mutex before accessing the value, making them safe for concurrent use from multiple `async` tasks. `compare_exchange` uses `==` for the equality check. See `examples/atomic` for a full demo.
+
+### `std.mutex` — Mutual Exclusion Lock
+
+```miva
+import "std/mutex";
+
+// Types
+Mutex = struct { handle: ptrany }
+MutexGuard = struct { handle: ptrany }  // RAII auto-unlock on drop
+
+// Lifecycle
+std.mutex.create(): Mutex                         // Heap-allocated unlocked mutex
+std.mutex.lock(ref m: Mutex)                      // Acquire lock (blocking)
+std.mutex.unlock(ref m: Mutex)                    // Release lock
+std.mutex.free(ref m: Mutex)                      // Destroy mutex (call exactly once)
+std.mutex.guard(ref m: Mutex): MutexGuard         // Lock and return RAII guard
+
+// MutexGuard implements op_drop: unlocking happens automatically at scope exit
+```
+
+**Important:** `std::mutex` is not reentrant — locking the same mutex twice from the same thread deadlocks. `MutexGuard` is move-only because it contains a `ptrany` that must be freed exactly once.
+
+See `examples/mutex` and `examples/mutex-guard` for usage examples.
+
+### `std.testptr` — Type-Safe Pointer Getter
+
+```miva
+import "std/testptr";
+
+// Cast a ptrany back to a typed pointer and dereference
+unsafe std.testptr.get[T](buf: ptrany): T
+```
+
+A thin utility for retrieving a typed value from an opaque `ptrany` handle. Used internally by `std.atomic` and `std.vec`.
+
 ### `std.box` — Boxed Values
+
 
 ```miva
 import "std/box";
@@ -1711,7 +1929,14 @@ std.option.contains[T](ref o, x): bool  // Is it Some containing x?
 
 // Conversion
 std.option.flatten[T](ref o): Option[T] // Flatten Option[Option[T]] → Option[T]
+
+// Higher-order functions (std-0.1.3+)
+std.option.map[T, U](ref opt, f: fn(T): U): Option[U]         // Transform contained value
+std.option.and_then[T, U](ref opt, f: fn(T): Option[U]): Option[U]  // Chain Option-producing fn
+std.option.filter[T](ref opt, pred: fn(T): bool): Option[T]    // Keep only if pred returns true
+std.option.ok_or[T, E](ref opt, err: E): std.result.Result[T, E]  // Convert to Result
 ```
+
 
 ### `std.result` — Result Values
 
@@ -1736,8 +1961,12 @@ std.result.unwrap_or[T, E](ref r, fallback): T  // Unwrap or return fallback
 
 // Transformation
 std.result.map_err[T, E, F](ref r, e): Result[T, F]  // Map error to new type
+std.result.map[T, E, U](ref r, f): Result[U, E]      // Map Ok value to new type
+std.result.and_then[T, E, U](ref r, f): Result[U, E] // Chain Result-producing fn on Ok
+std.result.or_else[T, E, F](ref r, f): Result[T, F]  // Chain Result-producing fn on Err
 
 // Combination
+
 std.result.and[T, E, U](ref r, other): Result[U, E]   // Chain on Ok
 std.result.or[T, E, F](ref r, other): Result[T, F]    // Fallback on Err
 ```
@@ -1996,7 +2225,12 @@ C++ source (.cpp, .h)        LLVM IR (.ll)          MVM bytecode (.mvm)
 Native binary (.exe / .so)
 ```
 
+#### Build Caching
+
+Miva implements a source-hash-based build cache to avoid recompiling unchanged files. Each source file gets a SHA-256 hash stored in `build/<config>/cache/src/<file>.sha256`. On subsequent builds, if the hash matches the cached value, the file is skipped. The cache is stored under `build/<config>/cache/` alongside the generated artifacts.
+
 ### Commands
+
 
 | Command | Description |
 |---------|-------------|

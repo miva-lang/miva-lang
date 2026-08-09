@@ -1,6 +1,6 @@
 # vec-demo Example
 
-This example demonstrates the use of `std.vec` from the Miva standard library (version 0.1.3).
+This example demonstrates the use of `std.vec` from the Miva standard library (version 0.1.4).
 
 ## What It Covers
 
