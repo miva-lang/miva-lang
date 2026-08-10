@@ -1,6 +1,7 @@
 # Miva 工具链架构优化计划
 
-> 状态：待评审 · 2026-07-27
+> 状态：**已执行**（详见 [architecture-optimization-status.md](./architecture-optimization-status.md)）
+> 原日期：2026-07-27 · 完成日期：2026-07-28
 > 范围：miva / miva-frontend-rs / miva-vm / miva-verify 四个 crate 及构建脚本
 > 原则：分阶段小步推进，每阶段独立可验证，三后端 examples 输出对拍作为回归兜底
 
